@@ -6,6 +6,9 @@ import { Language } from '~shared/types'
 import { useMdComponents } from '~hooks/useMdComponents'
 import { getValueInSelectedLanguage } from '~utils/multiLanguage'
 import { MarkdownText } from '~components/MarkdownText'
+import { Link } from '@tiptap/extension-link'
+import { EditorContent, useEditor } from '@tiptap/react'
+import { StarterKit } from '@tiptap/starter-kit'
 
 import { BaseFieldProps } from '../FieldContainer'
 import { ParagraphFieldSchema } from '../types'
@@ -37,14 +40,22 @@ export const ParagraphField = ({
     selectedLanguage: i18n.language as Language,
   })
 
-  return (
-    // <MarkdownText> returns an array of components, this causes styles that affect
-    // the immediate child layouts (i.e., gap) to be applied on the MarkdownText elements themselves.
-    // Wrapping in a Box component isolates the elements to avoid this.
-    <Box>
-      <MarkdownText multilineBreaks components={mdComponents}>
-        {description}
-      </MarkdownText>
-    </Box>
-  )
+  // return (
+  //   // <MarkdownText> returns an array of components, this causes styles that affect
+  //   // the immediate child layouts (i.e., gap) to be applied on the MarkdownText elements themselves.
+  //   // Wrapping in a Box component isolates the elements to avoid this.
+  //   <Box>
+  //     <MarkdownText multilineBreaks components={mdComponents}>
+  //       {description}
+  //     </MarkdownText>
+  //   </Box>
+  // )
+  // TODO: Rework on editor integration with updated code
+  const editor = useEditor({
+    editable: false,
+    content: schema.description,
+    extensions: [StarterKit, Link],
+  })
+
+  return <EditorContent editor={editor} />
 }
