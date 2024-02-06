@@ -51,11 +51,14 @@ export const ParagraphField = ({
   //   </Box>
   // )
   // TODO: Rework on editor integration with updated code
-  const editor = useEditor({
-    editable: false,
-    content: schema.description,
-    extensions: [StarterKit, Link],
-  })
-
+  // Using a read-only instance of Tiptap for rendering ensures that the HTML content is rendered consistently
+  const editor = useEditor(
+    {
+      editable: false,
+      content: schema.description,
+      extensions: [StarterKit, Link],
+    },
+    [schema],
+  )
   return <EditorContent editor={editor} />
 }
