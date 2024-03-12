@@ -71,12 +71,8 @@ export const EditParagraph = ({ field }: EditParagraphProps): JSX.Element => {
           name="description"
           control={control}
           rules={requiredValidationRule}
-          render={({ field, fieldState }) => (
-            <RichTextEditor
-              onChange={field.onChange}
-              value={field.value}
-              invalid={fieldState.invalid}
-            />
+          render={({ field }) => (
+            <RichTextEditor onChange={field.onChange} value={field.value} />
           )}
         />
         {/* Incoming */}
