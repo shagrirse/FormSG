@@ -134,18 +134,6 @@ export const compulsoryVarsSchema: Schema<ICompulsoryVarsSchema> = {
       default: null,
       env: 'STATIC_ASSETS_S3_BUCKET',
     },
-    virusScannerQuarantineS3Bucket: {
-      doc: 'S3 Bucket to quarantine files for virus scanning',
-      format: String,
-      default: null,
-      env: 'VIRUS_SCANNER_QUARANTINE_S3_BUCKET',
-    },
-    virusScannerCleanS3Bucket: {
-      doc: 'S3 Bucket to store files that have been scanned and are clean',
-      format: String,
-      default: null,
-      env: 'VIRUS_SCANNER_CLEAN_S3_BUCKET',
-    },
   },
   core: {
     sessionSecret: {
@@ -320,18 +308,6 @@ export const optionalVarsSchema: Schema<IOptionalVarsSchema> = {
       default: '',
       env: 'CUSTOM_CLOUDWATCH_LOG_GROUP',
     },
-    virusScannerLambdaFunctionName: {
-      doc: 'Virus scanner lambda function name',
-      format: String,
-      default: '',
-      env: 'VIRUS_SCANNER_LAMBDA_FUNCTION_NAME',
-    },
-    virusScannerLambdaEndpoint: {
-      doc: 'Endpoint address for virus scanner lambda function. Specify this if the lambda is hosted neither on AWS nor your local dev environment.',
-      format: String,
-      default: '',
-      env: 'VIRUS_SCANNER_LAMBDA_ENDPOINT',
-    },
     guarddutyQuarantineS3Bucket: {
       doc: 'New guardduty S3 Bucket to quarantine files for virus scanning',
       format: String,
@@ -355,6 +331,18 @@ export const optionalVarsSchema: Schema<IOptionalVarsSchema> = {
       format: String,
       default: '',
       env: 'GUARDDUTY_LAMBDA_FUNCTION_NAME',
+    },
+    pdfGeneratorLambdaEndpoint: {
+      doc: 'Endpoint address for pdf generator lambda function. Specify this if the lambda is hosted neither on AWS nor your local dev environment.',
+      format: String,
+      default: '',
+      env: 'PDF_GENERATOR_LAMBDA_ENDPOINT',
+    },
+    pdfGeneratorLambdaFunctionName: {
+      doc: 'PDF generator lambda function name',
+      format: String,
+      default: '',
+      env: 'PDF_GENERATOR_LAMBDA_FUNCTION_NAME',
     },
   },
   core: {
@@ -608,12 +596,6 @@ export const loadS3BucketUrlSchema = ({
     },
     staticAssetsBucketUrl: {
       doc: 'Url of static assets S3 bucket.',
-      format: (val) =>
-        validateS3BucketUrl(val, { isDev, hasTrailingSlash: false, region }),
-      default: null,
-    },
-    virusScannerQuarantineS3BucketUrl: {
-      doc: 'Url of virus scanner quarantine S3 bucket.',
       format: (val) =>
         validateS3BucketUrl(val, { isDev, hasTrailingSlash: false, region }),
       default: null,

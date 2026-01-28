@@ -3,11 +3,16 @@ import { z } from 'zod'
 
 import { ErrorDto } from './core'
 import { FormFieldDto, MyInfoAttribute, PaymentFieldsDto } from './field'
-import { FormAuthType } from './form/form'
+import { FormAuthType, StrippedFormFieldDto } from './form/form'
 import { DateString } from './generic'
 import { EmailResponse, FieldResponse, MobileResponse } from './response'
 import { PaymentStatus } from './payment'
-import { FormWorkflowDto, LogicDto, ProductItem } from './form'
+import {
+  FormWorkflowDto,
+  LogicDto,
+  ProductItem,
+  StrippedFormWorkflowDto,
+} from './form'
 import { ErrorCode } from './errorCodes'
 export type SubmissionId = Opaque<string, 'SubmissionId'>
 export const SubmissionId = z.string() as unknown as z.Schema<SubmissionId>
@@ -125,6 +130,7 @@ export const MultirespondentSubmissionBase = SubmissionBase.extend({
   submissionPublicKey: z.string(),
   encryptedSubmissionSecretKey: z.string(),
   encryptedContent: z.string(),
+  verifiedContent: z.string().optional(),
   attachmentMetadata: z.map(z.string(), z.string()).optional(),
   version: z.number(),
   workflowStep: z.number(),
@@ -184,7 +190,7 @@ export type MultirespondentSubmissionDto = SubmissionDtoBase & {
   form_fields: FormFieldDto[]
   form_logics: LogicDto[]
   workflow: FormWorkflowDto
-
+  verifiedContent?: string
   submissionPublicKey: string
   encryptedSubmissionSecretKey: string
   encryptedContent: string
@@ -195,6 +201,14 @@ export type MultirespondentSubmissionDto = SubmissionDtoBase & {
   mrfVersion: number
 
   mrfMeta: SubmissionMrfMetadata
+}
+
+export type PublicMultirespondentSubmissionDto = Omit<
+  MultirespondentSubmissionDto,
+  'workflow' | 'form_fields'
+> & {
+  form_fields: StrippedFormFieldDto[]
+  workflow: StrippedFormWorkflowDto
 }
 
 export type SubmissionDto =
@@ -224,6 +238,7 @@ export const MultirespondentSubmissionStreamDto =
     form_logics: true,
     encryptedSubmissionSecretKey: true,
     encryptedContent: true,
+    verifiedContent: true,
     version: true,
     mrfVersion: true,
   }).extend({
@@ -358,7 +373,7 @@ export type PaymentSubmissionData = {
 
 export type StatusTrackerData = {
   submittedSteps: SubmittedStep[] | undefined
-  workflow: FormWorkflowDto
+  workflow: StrippedFormWorkflowDto
   responseId: string | undefined
   form: string
 }

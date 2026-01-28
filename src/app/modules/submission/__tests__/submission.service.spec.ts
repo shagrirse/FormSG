@@ -54,6 +54,7 @@ import {
   AttachmentSizeLimitExceededError,
   AttachmentTooLargeError,
   DownloadCleanFileFailedError,
+  GuardDutyInvalidFileKeyError,
   InvalidFieldIdError,
   InvalidFileExtensionError,
   InvalidFileKeyError,
@@ -67,7 +68,7 @@ import {
   downloadCleanFile,
   getQuarantinePresignedPostData,
   transformAttachmentMetasToSignedUrls,
-  triggerVirusScanning,
+  triggerGuardDutyScanning,
 } from '../submission.service'
 import {
   buildMrfMetadata,
@@ -90,6 +91,7 @@ const MOCK_AUTOREPLY_DATA = [
   {
     question: 'Email',
     answerTemplate: ['a@abc.com'],
+    fieldType: BasicField.Email,
   },
 ]
 const AUTOREPLY_OPTIONS_1: AutoReplyOptions = {
@@ -453,7 +455,9 @@ describe('submission.service', () => {
         form: mockForm,
         recipientData,
         submission: MOCK_SUBMISSION,
-        attachments: MOCK_ATTACHMENTS,
+        submissionAttachments: MOCK_ATTACHMENTS,
+        pdfAttachment: undefined,
+        isPaymentEnabled: false,
         responsesData: MOCK_AUTOREPLY_DATA,
       })
 
@@ -465,7 +469,9 @@ describe('submission.service', () => {
       expect(MockMailService.sendAutoReplyEmails).toHaveBeenCalledWith({
         form: mockForm,
         submission: MOCK_SUBMISSION,
-        attachments: MOCK_ATTACHMENTS,
+        submissionAttachments: MOCK_ATTACHMENTS,
+        pdfAttachment: undefined,
+        isPaymentEnabled: false,
         responsesData: MOCK_AUTOREPLY_DATA,
         autoReplyMailDatas: expectedAutoReplyData,
       })
@@ -494,7 +500,9 @@ describe('submission.service', () => {
         form: mockForm,
         recipientData,
         submission: MOCK_SUBMISSION,
-        attachments: MOCK_ATTACHMENTS,
+        submissionAttachments: MOCK_ATTACHMENTS,
+        pdfAttachment: undefined,
+        isPaymentEnabled: false,
         responsesData: MOCK_AUTOREPLY_DATA,
       })
 
@@ -539,7 +547,9 @@ describe('submission.service', () => {
         form: mockForm,
         recipientData,
         submission: MOCK_SUBMISSION,
-        attachments: MOCK_ATTACHMENTS,
+        submissionAttachments: MOCK_ATTACHMENTS,
+        pdfAttachment: undefined,
+        isPaymentEnabled: false,
         responsesData: MOCK_AUTOREPLY_DATA,
       })
 
@@ -590,7 +600,9 @@ describe('submission.service', () => {
         form: mockForm,
         recipientData,
         submission: MOCK_SUBMISSION,
-        attachments: MOCK_ATTACHMENTS,
+        submissionAttachments: MOCK_ATTACHMENTS,
+        pdfAttachment: undefined,
+        isPaymentEnabled: false,
         responsesData: MOCK_AUTOREPLY_DATA,
       })
 
@@ -599,7 +611,9 @@ describe('submission.service', () => {
       expect(MockMailService.sendAutoReplyEmails).toHaveBeenCalledWith({
         form: mockForm,
         submission: MOCK_SUBMISSION,
-        attachments: MOCK_ATTACHMENTS,
+        submissionAttachments: MOCK_ATTACHMENTS,
+        pdfAttachment: undefined,
+        isPaymentEnabled: false,
         responsesData: MOCK_AUTOREPLY_DATA,
         autoReplyMailDatas: expectedAutoReplyData,
       })
@@ -653,8 +667,10 @@ describe('submission.service', () => {
         form: mockForm,
         recipientData,
         submission: MOCK_SUBMISSION,
-        attachments: MOCK_ATTACHMENTS,
-        responsesData: undefined,
+        submissionAttachments: MOCK_ATTACHMENTS,
+        pdfAttachment: undefined,
+        isPaymentEnabled: false,
+        responsesData: [],
       })
 
       const expectedAutoReplyData = [
@@ -665,14 +681,91 @@ describe('submission.service', () => {
       expect(MockMailService.sendAutoReplyEmails).toHaveBeenCalledWith({
         form: mockForm,
         submission: MOCK_SUBMISSION,
-        attachments: MOCK_ATTACHMENTS,
+        submissionAttachments: MOCK_ATTACHMENTS,
         responsesData: [],
+        autoReplyMailDatas: expectedAutoReplyData,
+        pdfAttachment: undefined,
+        isPaymentEnabled: false,
+      })
+      expect(result._unsafeUnwrap()).toBe(true)
+    })
+
+    it('should call mail service with pdfAttachment when a pdfAttachment is provided', async () => {
+      const mockForm = {
+        _id: MOCK_FORM_ID,
+        form_fields: [
+          {
+            ...generateDefaultField(BasicField.Email),
+            autoReplyOptions: AUTOREPLY_OPTIONS_1,
+          },
+          {
+            ...generateDefaultField(BasicField.Email),
+            autoReplyOptions: AUTOREPLY_OPTIONS_2,
+          },
+        ],
+      } as unknown as IPopulatedForm
+      MockMailService.sendAutoReplyEmails.mockResolvedValueOnce([
+        {
+          status: 'fulfilled',
+          value: ok(true),
+        },
+        {
+          status: 'fulfilled',
+          value: ok(true),
+        },
+      ])
+
+      const responses = [
+        {
+          ...generateNewSingleAnswerResponse(BasicField.Email, {
+            _id: mockForm.form_fields![0]._id,
+            answer: MOCK_EMAIL_1,
+          }),
+        },
+        {
+          ...generateNewSingleAnswerResponse(BasicField.Email, {
+            _id: mockForm.form_fields![1]._id,
+            answer: MOCK_EMAIL_2,
+          }),
+        },
+      ]
+      const recipientData = extractEmailConfirmationData(
+        responses,
+        mockForm.form_fields,
+      )
+
+      const MOCK_PDF_ATTACHMENT = {
+        content: Buffer.from('mock pdf buffer'),
+        filename: 'response.pdf',
+      }
+      const result = await SubmissionService.sendEmailConfirmations({
+        form: mockForm,
+        recipientData,
+        submission: MOCK_SUBMISSION,
+        submissionAttachments: undefined,
+        responsesData: MOCK_AUTOREPLY_DATA,
+        isPaymentEnabled: false,
+        pdfAttachment: MOCK_PDF_ATTACHMENT,
+      })
+
+      const expectedAutoReplyData = [
+        EXPECTED_AUTOREPLY_DATA_1,
+        EXPECTED_AUTOREPLY_DATA_2,
+      ]
+
+      expect(MockMailService.sendAutoReplyEmails).toHaveBeenCalledWith({
+        form: mockForm,
+        submission: MOCK_SUBMISSION,
+        submissionAttachments: undefined,
+        pdfAttachment: MOCK_PDF_ATTACHMENT,
+        isPaymentEnabled: false,
+        responsesData: MOCK_AUTOREPLY_DATA,
         autoReplyMailDatas: expectedAutoReplyData,
       })
       expect(result._unsafeUnwrap()).toBe(true)
     })
 
-    it('should call mail service with attachments undefined when there are no attachments', async () => {
+    it('should call mail service with submissionAttachments undefined and pdfAttachment undefined when there are no submissionAttachments or pdfAttachment', async () => {
       const mockForm = {
         _id: MOCK_FORM_ID,
         form_fields: [
@@ -719,8 +812,10 @@ describe('submission.service', () => {
         form: mockForm,
         recipientData,
         submission: MOCK_SUBMISSION,
-        attachments: undefined,
+        submissionAttachments: undefined,
         responsesData: MOCK_AUTOREPLY_DATA,
+        isPaymentEnabled: false,
+        pdfAttachment: undefined,
       })
 
       const expectedAutoReplyData = [
@@ -731,7 +826,9 @@ describe('submission.service', () => {
       expect(MockMailService.sendAutoReplyEmails).toHaveBeenCalledWith({
         form: mockForm,
         submission: MOCK_SUBMISSION,
-        attachments: undefined,
+        submissionAttachments: undefined,
+        pdfAttachment: undefined,
+        isPaymentEnabled: false,
         responsesData: MOCK_AUTOREPLY_DATA,
         autoReplyMailDatas: expectedAutoReplyData,
       })
@@ -778,8 +875,10 @@ describe('submission.service', () => {
         form: mockForm,
         recipientData,
         submission: MOCK_SUBMISSION,
-        attachments: MOCK_ATTACHMENTS,
+        submissionAttachments: MOCK_ATTACHMENTS,
         responsesData: MOCK_AUTOREPLY_DATA,
+        isPaymentEnabled: false,
+        pdfAttachment: undefined,
       })
 
       const expectedAutoReplyData = [
@@ -790,7 +889,9 @@ describe('submission.service', () => {
       expect(MockMailService.sendAutoReplyEmails).toHaveBeenCalledWith({
         form: mockForm,
         submission: MOCK_SUBMISSION,
-        attachments: MOCK_ATTACHMENTS,
+        submissionAttachments: MOCK_ATTACHMENTS,
+        pdfAttachment: undefined,
+        isPaymentEnabled: false,
         responsesData: MOCK_AUTOREPLY_DATA,
         autoReplyMailDatas: expectedAutoReplyData,
       })
@@ -847,8 +948,10 @@ describe('submission.service', () => {
         form: mockForm,
         recipientData,
         submission: MOCK_SUBMISSION,
-        attachments: MOCK_ATTACHMENTS,
+        submissionAttachments: MOCK_ATTACHMENTS,
         responsesData: MOCK_AUTOREPLY_DATA,
+        isPaymentEnabled: false,
+        pdfAttachment: undefined,
       })
 
       const expectedAutoReplyData = [
@@ -859,9 +962,11 @@ describe('submission.service', () => {
       expect(MockMailService.sendAutoReplyEmails).toHaveBeenCalledWith({
         form: mockForm,
         submission: MOCK_SUBMISSION,
-        attachments: MOCK_ATTACHMENTS,
+        submissionAttachments: MOCK_ATTACHMENTS,
         responsesData: MOCK_AUTOREPLY_DATA,
         autoReplyMailDatas: expectedAutoReplyData,
+        pdfAttachment: undefined,
+        isPaymentEnabled: false,
       })
       expect(result._unsafeUnwrapErr()).toEqual(
         new SendEmailConfirmationError(),
@@ -2299,18 +2404,10 @@ describe('submission.service', () => {
       // Arrange
       const awsSpy = jest.spyOn(aws.s3, 'createPresignedPost')
       const expectedCalledWithSubset = {
-        Bucket: aws.virusScannerQuarantineS3Bucket,
+        Bucket: aws.guarddutyQuarantineS3Bucket,
         Fields: { key: expect.stringMatching(REGEX_UUID) },
         Expires: 1 * 60, // expires in 1 minutes
       }
-      const expectedPresignedPostData = expect.objectContaining({
-        url: `${aws.endPoint}/${aws.virusScannerQuarantineS3Bucket}`,
-        fields: expect.objectContaining({
-          key: expect.stringMatching(REGEX_UUID),
-          bucket: aws.virusScannerQuarantineS3Bucket,
-          'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
-        }),
-      })
 
       const expectedPresignedPostDataGuardDuty = expect.objectContaining({
         url: `${aws.endPoint}/${aws.guarddutyQuarantineS3Bucket}`,
@@ -2328,24 +2425,8 @@ describe('submission.service', () => {
 
       // Assert
       expect(actualResult.isOk()).toEqual(true)
-      expect(awsSpy).toHaveBeenCalledTimes(4)
+      expect(awsSpy).toHaveBeenCalledTimes(2)
       expect(awsSpy.mock.calls).toEqual([
-        [
-          {
-            ...expectedCalledWithSubset,
-            Fields: { key: uuid1 },
-            Conditions: [['content-length-range', 0, 1]],
-          },
-          expect.any(Function), // anonymous error handling function
-        ],
-        [
-          {
-            ...expectedCalledWithSubset,
-            Fields: { key: uuid2 },
-            Conditions: [['content-length-range', 0, 2]],
-          },
-          expect.any(Function), // anonymous error handling function
-        ],
         [
           {
             ...expectedCalledWithSubset,
@@ -2368,8 +2449,6 @@ describe('submission.service', () => {
       const actualResultValue = actualResult._unsafeUnwrap()
       expect(actualResultValue).toEqual(
         expect.objectContaining([
-          { id: fieldId1, presignedPostData: expectedPresignedPostData },
-          { id: fieldId2, presignedPostData: expectedPresignedPostData },
           {
             id: fieldId1,
             presignedPostData: expectedPresignedPostDataGuardDuty,
@@ -2403,7 +2482,7 @@ describe('submission.service', () => {
       )
       expect(awsSpy).toHaveBeenCalledWith(
         {
-          Bucket: aws.virusScannerQuarantineS3Bucket,
+          Bucket: aws.guarddutyQuarantineS3Bucket,
           Fields: { key: expect.stringMatching(REGEX_UUID) },
           Expires: 1 * 60, // expires in 1 minutes
           Conditions: [['content-length-range', 0, 1]],
@@ -2442,7 +2521,7 @@ describe('submission.service', () => {
     })
   })
 
-  describe('triggerVirusScanning', () => {
+  describe('triggerGuarddutyScanning', () => {
     const MOCK_VALID_FILE_KEY = '1b90195b-ce8a-4590-810b-04ebaef8e4dd'
     const MOCK_SUCCESS_BODY_PAYLOAD = {
       cleanFileKey: 'cleanFileKey',
@@ -2451,31 +2530,35 @@ describe('submission.service', () => {
     it('should return errAsync when quarantine file key is not a valid uuid', async () => {
       // Arrange
       const awsSpy = jest
-        .spyOn(aws.virusScannerLambda, 'invoke')
+        .spyOn(aws.guarddutyLambda, 'invoke')
         .mockImplementationOnce(() => {
           return Promise.reject()
         })
       const mockQuarantineFileKey = 'not a uuid'
 
       // Act
-      const actualResult = await triggerVirusScanning(mockQuarantineFileKey)
+      const actualResult = await triggerGuardDutyScanning(mockQuarantineFileKey)
 
       // Assert
       expect(awsSpy).not.toHaveBeenCalled()
       expect(actualResult.isErr()).toEqual(true)
-      expect(actualResult._unsafeUnwrapErr()).toEqual(new InvalidFileKeyError())
+      expect(actualResult._unsafeUnwrapErr()).toEqual(
+        new GuardDutyInvalidFileKeyError(
+          'GUARDDUTY Invalid file key. File keys should be valid UUIDs.',
+        ),
+      )
     })
 
     it('should return errAsync when lambda invocation fails', async () => {
       // Arrange
       const awsSpy = jest
-        .spyOn(aws.virusScannerLambda, 'invoke')
+        .spyOn(aws.guarddutyLambda, 'invoke')
         .mockImplementationOnce(() => {
           return Promise.reject()
         })
 
       // Act
-      const actualResult = await triggerVirusScanning(MOCK_VALID_FILE_KEY)
+      const actualResult = await triggerGuardDutyScanning(MOCK_VALID_FILE_KEY)
 
       // Assert
       expect(awsSpy).toHaveBeenCalledOnce()
@@ -2488,13 +2571,13 @@ describe('submission.service', () => {
     it('should return errAsync when data is undefined', async () => {
       // Arrange
       const awsSpy = jest
-        .spyOn(aws.virusScannerLambda, 'invoke')
+        .spyOn(aws.guarddutyLambda, 'invoke')
         .mockImplementationOnce(() => {
           return Promise.resolve(undefined)
         })
 
       // Act
-      const actualResult = await triggerVirusScanning(MOCK_VALID_FILE_KEY)
+      const actualResult = await triggerGuardDutyScanning(MOCK_VALID_FILE_KEY)
 
       // Assert
       expect(awsSpy).toHaveBeenCalledOnce()
@@ -2507,13 +2590,13 @@ describe('submission.service', () => {
     it('should return errAsync when data.Payload is undefined', async () => {
       // Arrange
       const awsSpy = jest
-        .spyOn(aws.virusScannerLambda, 'invoke')
+        .spyOn(aws.guarddutyLambda, 'invoke')
         .mockImplementationOnce(() => {
           return Promise.resolve({ Payload: undefined })
         })
 
       // Act
-      const actualResult = await triggerVirusScanning(MOCK_VALID_FILE_KEY)
+      const actualResult = await triggerGuardDutyScanning(MOCK_VALID_FILE_KEY)
 
       // Assert
       expect(awsSpy).toHaveBeenCalledOnce()
@@ -2530,7 +2613,7 @@ describe('submission.service', () => {
         body: JSON.stringify(MOCK_SUCCESS_BODY_PAYLOAD),
       }
       const awsSpy = jest
-        .spyOn(aws.virusScannerLambda, 'invoke')
+        .spyOn(aws.guarddutyLambda, 'invoke')
         .mockImplementationOnce(() => {
           return Promise.resolve({
             Payload: JSON.stringify(successPayload),
@@ -2542,7 +2625,7 @@ describe('submission.service', () => {
       }
 
       // Act
-      const actualResult = await triggerVirusScanning(MOCK_VALID_FILE_KEY)
+      const actualResult = await triggerGuardDutyScanning(MOCK_VALID_FILE_KEY)
 
       // Assert
       expect(awsSpy).toHaveBeenCalledOnce()
@@ -2553,7 +2636,7 @@ describe('submission.service', () => {
     it('should return errAsync if payload cannot be parsed', async () => {
       // Arrange
       const awsSpy = jest
-        .spyOn(aws.virusScannerLambda, 'invoke')
+        .spyOn(aws.guarddutyLambda, 'invoke')
         .mockImplementationOnce(() => {
           return Promise.resolve({
             Payload: '{',
@@ -2561,7 +2644,7 @@ describe('submission.service', () => {
         })
 
       // Act
-      const actualResult = await triggerVirusScanning(MOCK_VALID_FILE_KEY)
+      const actualResult = await triggerGuardDutyScanning(MOCK_VALID_FILE_KEY)
 
       // Assert
       expect(awsSpy).toHaveBeenCalledOnce()
@@ -2578,7 +2661,7 @@ describe('submission.service', () => {
         body: JSON.stringify(MOCK_SUCCESS_BODY_PAYLOAD),
       }
       const awsSpy = jest
-        .spyOn(aws.virusScannerLambda, 'invoke')
+        .spyOn(aws.guarddutyLambda, 'invoke')
         .mockImplementationOnce(() => {
           return Promise.resolve({
             Payload: JSON.stringify(successPayload),
@@ -2586,7 +2669,7 @@ describe('submission.service', () => {
         })
 
       // Act
-      const actualResult = await triggerVirusScanning(MOCK_VALID_FILE_KEY)
+      const actualResult = await triggerGuardDutyScanning(MOCK_VALID_FILE_KEY)
 
       // Assert
       expect(awsSpy).toHaveBeenCalledOnce()
@@ -2603,7 +2686,7 @@ describe('submission.service', () => {
         body: 2023, // not a string
       }
       const awsSpy = jest
-        .spyOn(aws.virusScannerLambda, 'invoke')
+        .spyOn(aws.guarddutyLambda, 'invoke')
         .mockImplementationOnce(() => {
           return Promise.resolve({
             Payload: JSON.stringify(successPayload),
@@ -2611,7 +2694,7 @@ describe('submission.service', () => {
         })
 
       // Act
-      const actualResult = await triggerVirusScanning(MOCK_VALID_FILE_KEY)
+      const actualResult = await triggerGuardDutyScanning(MOCK_VALID_FILE_KEY)
 
       // Assert
       expect(awsSpy).toHaveBeenCalledOnce()
@@ -2628,7 +2711,7 @@ describe('submission.service', () => {
         body: '}',
       }
       const awsSpy = jest
-        .spyOn(aws.virusScannerLambda, 'invoke')
+        .spyOn(aws.guarddutyLambda, 'invoke')
         .mockImplementationOnce(() => {
           return Promise.resolve({
             Payload: JSON.stringify(invalidSuccessPayload),
@@ -2636,7 +2719,7 @@ describe('submission.service', () => {
         })
 
       // Act
-      const actualResult = await triggerVirusScanning(MOCK_VALID_FILE_KEY)
+      const actualResult = await triggerGuardDutyScanning(MOCK_VALID_FILE_KEY)
 
       // Assert
       expect(awsSpy).toHaveBeenCalledOnce()
@@ -2656,7 +2739,7 @@ describe('submission.service', () => {
         },
       }
       const awsSpy = jest
-        .spyOn(aws.virusScannerLambda, 'invoke')
+        .spyOn(aws.guarddutyLambda, 'invoke')
         .mockImplementationOnce(() => {
           return Promise.resolve({
             Payload: JSON.stringify(invalidSuccessPayload),
@@ -2664,7 +2747,7 @@ describe('submission.service', () => {
         })
 
       // Act
-      const actualResult = await triggerVirusScanning(MOCK_VALID_FILE_KEY)
+      const actualResult = await triggerGuardDutyScanning(MOCK_VALID_FILE_KEY)
 
       // Assert
       expect(awsSpy).toHaveBeenCalledOnce()
@@ -2684,7 +2767,7 @@ describe('submission.service', () => {
         },
       }
       const awsSpy = jest
-        .spyOn(aws.virusScannerLambda, 'invoke')
+        .spyOn(aws.guarddutyLambda, 'invoke')
         .mockImplementationOnce(() => {
           return Promise.resolve({
             Payload: JSON.stringify(invalidSuccessPayload),
@@ -2692,7 +2775,7 @@ describe('submission.service', () => {
         })
 
       // Act
-      const actualResult = await triggerVirusScanning(MOCK_VALID_FILE_KEY)
+      const actualResult = await triggerGuardDutyScanning(MOCK_VALID_FILE_KEY)
 
       // Assert
       expect(awsSpy).toHaveBeenCalledOnce()
@@ -2711,7 +2794,7 @@ describe('submission.service', () => {
         }),
       }
       const awsSpy = jest
-        .spyOn(aws.virusScannerLambda, 'invoke')
+        .spyOn(aws.guarddutyLambda, 'invoke')
         .mockImplementationOnce(() => {
           return Promise.resolve({
             Payload: JSON.stringify(failurePayload),
@@ -2719,14 +2802,14 @@ describe('submission.service', () => {
         })
 
       // Act
-      const actualResult = await triggerVirusScanning(MOCK_VALID_FILE_KEY)
+      const actualResult = await triggerGuardDutyScanning(MOCK_VALID_FILE_KEY)
 
       // Assert
       expect(awsSpy).toHaveBeenCalledOnce()
       expect(actualResult.isErr()).toEqual(true)
       expect(actualResult._unsafeUnwrapErr()).toEqual(
-        new InvalidFileKeyError(
-          'Invalid file key - file key is not found in the quarantine bucket. The file must be uploaded first.',
+        new GuardDutyInvalidFileKeyError(
+          'GUARDDUTY Invalid file key - file key is not found in the quarantine bucket. The file must be uploaded first.',
         ),
       )
     })
@@ -2740,7 +2823,7 @@ describe('submission.service', () => {
         }),
       }
       const awsSpy = jest
-        .spyOn(aws.virusScannerLambda, 'invoke')
+        .spyOn(aws.guarddutyLambda, 'invoke')
         .mockImplementationOnce(() => {
           return Promise.resolve({
             Payload: JSON.stringify(failurePayload),
@@ -2748,7 +2831,7 @@ describe('submission.service', () => {
         })
 
       // Act
-      const actualResult = await triggerVirusScanning(MOCK_VALID_FILE_KEY)
+      const actualResult = await triggerGuardDutyScanning(MOCK_VALID_FILE_KEY)
 
       // Assert
       expect(awsSpy).toHaveBeenCalledOnce()
@@ -2767,7 +2850,11 @@ describe('submission.service', () => {
 
       // Act
       // empty string for version id to simulate failure
-      const actualResult = await downloadCleanFile('invalid-key', '')
+      const actualResult = await downloadCleanFile(
+        'invalid-key',
+        '',
+        'mock-bucket-name',
+      )
 
       // Assert
       expect(awsSpy).not.toHaveBeenCalled()
@@ -2781,7 +2868,11 @@ describe('submission.service', () => {
 
       // Act
       // empty string for version id to simulate failure
-      const actualResult = await downloadCleanFile(MOCK_VALID_UUID, '')
+      const actualResult = await downloadCleanFile(
+        MOCK_VALID_UUID,
+        '',
+        'mock-bucket-name',
+      )
 
       // Assert
       expect(awsSpy).toHaveBeenCalledOnce()
@@ -2816,7 +2907,11 @@ describe('submission.service', () => {
 
       // Act
       // empty strings for invalid keys and version ids
-      const actualResult = await downloadCleanFile(MOCK_VALID_UUID, versionId)
+      const actualResult = await downloadCleanFile(
+        MOCK_VALID_UUID,
+        versionId,
+        'mock-bucket-name',
+      )
 
       // Assert
       expect(awsSpy).toHaveBeenCalledOnce()

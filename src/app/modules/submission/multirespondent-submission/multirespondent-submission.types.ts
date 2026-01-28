@@ -17,7 +17,7 @@ import { ControllerHandler } from '../../core/core.types'
 
 export type CreateFormsgAndRetrieveFormMiddlewareHandlerType =
   ControllerHandler<
-    { formId: string },
+    { formId: string; submissionId?: string },
     SubmissionResponseDto | SubmissionErrorDto,
     ParsedMultirespondentSubmissionBody,
     { captchaResponse?: unknown; captchaType?: unknown }
@@ -85,6 +85,7 @@ export type MultirespondentSubmissionContent = {
   submissionPublicKey: string
   encryptedSubmissionSecretKey: string
   encryptedContent: string
+  verifiedContent: string | undefined
   attachmentMetadata: Map<string, string>
   version: number
   workflowStep: number

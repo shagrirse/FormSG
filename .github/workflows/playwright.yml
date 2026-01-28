@@ -3,17 +3,17 @@ name: Playwright Tests
 on:
   push:
     branches-ignore:
-      - staging
-      - staging-alt
-      - staging-alt2
+      - stg
+      - stg-alt
+      - stg-alt2
       - stg-alt3
       - uat
   pull_request:
     types: [opened, reopened]
     branches-ignore:
-      - staging
-      - staging-alt
-      - staging-alt2
+      - stg
+      - stg-alt
+      - stg-alt2
       - stg-alt3
       - uat
 
@@ -25,23 +25,17 @@ jobs:
       AWS_SDK_JS_SUPPRESS_MAINTENANCE_MODE_MESSAGE: 1
       DD_TAGS: layer:e2e
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
+      - uses: actions/checkout@v4
         with:
-          node-version: 18
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - name: Install dependencies
         run: npm ci
-      - name: Install Playwright Browsers
-        run: npx playwright install --with-deps
-      - name: Configure Datadog Test Visibility
-        uses: datadog/test-visibility-github-action@v1.0.5
-        with:
-          languages: js
-          service-name: ${{ secrets.DD_SERVICE }}
-          api-key: ${{ secrets.DD_API_KEY }}
       - name: Build
         env:
-          NODE_OPTIONS: --max-old-space-size=4096 -r ${{ env.DD_TRACE_PACKAGE }}
+          NODE_OPTIONS: --max-old-space-size=4096
           VITE_APP_FORMSG_SDK_MODE: 'test'
         run: npm run build
       - name: Cache build artifacts
@@ -69,10 +63,8 @@ jobs:
         project:
           [
             'chromium-login',
-            'chromium-email-submission',
             'chromium-encrypt-submission',
             'firefox-login',
-            'firefox-email-submission',
             'firefox-encrypt-submission',
           ]
     env:
@@ -80,10 +72,12 @@ jobs:
       DD_TAGS: layer:e2e
       SHARD_COUNT: 4
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
+      - uses: actions/checkout@v4
         with:
-          node-version: 18
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - name: Restore build artifacts
         uses: actions/cache/restore@v3
         with:

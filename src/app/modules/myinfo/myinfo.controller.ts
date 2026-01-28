@@ -1,6 +1,7 @@
 import { celebrate, Joi, Segments } from 'celebrate'
 import { StatusCodes } from 'http-status-codes'
 
+import { featureFlags } from '../../../../shared/constants'
 import { Environment } from '../../../types'
 import config from '../../config/config'
 import { createLoggerWithLabel } from '../../config/logger'
@@ -18,7 +19,7 @@ import {
   MyInfoAuthCodeCookieState,
   MyInfoAuthCodeSuccessPayload,
 } from './myinfo.types'
-import { mapRedirectURLError, validateMyInfoForm } from './myinfo.util'
+import { getMyInfoEserviceIdInForm, mapRedirectURLError } from './myinfo.util'
 
 const logger = createLoggerWithLabel(module)
 
@@ -47,11 +48,12 @@ export const respondWithRedirectURL: ControllerHandler<
   { formId: string; encodedQuery?: string }
 > = async (req, res) => {
   const { formId, encodedQuery } = req.query
+  const useFormsgEsrvcId = req.growthbook?.isOn(featureFlags.useFormsgEsrvcId)
   return FormService.retrieveFormById(formId)
-    .andThen((form) => validateMyInfoForm(form))
-    .andThen((form) =>
+    .andThen((form) => getMyInfoEserviceIdInForm(form, useFormsgEsrvcId))
+    .andThen(([form, eserviceId]) =>
       MyInfoService.createRedirectURL({
-        formEsrvcId: form.esrvcId,
+        formEsrvcId: eserviceId,
         formId,
         requestedAttributes: form.getUniqueMyInfoAttrs(),
         encodedQuery,
@@ -92,6 +94,7 @@ const validateMyInfoLogin = celebrate({
       .keys({
         code: Joi.string().required(),
         state: Joi.string().required(),
+        forwarded: Joi.string().optional(),
       })
       // MyInfo sends several other params which are not necessary for Form
       .unknown(true),
@@ -100,6 +103,7 @@ const validateMyInfoLogin = celebrate({
         'error-description': Joi.string(),
         error: Joi.string().required(),
         state: Joi.string().required(),
+        forwarded: Joi.string().optional(),
       })
       // Allow other params in case MyInfo adds them in future
       .unknown(true),
@@ -107,11 +111,12 @@ const validateMyInfoLogin = celebrate({
 })
 
 type MyInfoLoginQueryParams =
-  | { code: string; state: string }
+  | { code: string; state: string; forwarded?: string }
   | {
       error: string
       'error-description'?: string
       state: string
+      forwarded?: string
     }
 
 /**

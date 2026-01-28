@@ -25,7 +25,8 @@ jobs:
       aws-region: 'ap-southeast-1'
       ecr-repository: 'formsg'
       # ECS configuration
-      ecs-cpu: 2048
+      ecs-cpu: 1024
+      formsg-app-reserved-cpu: 896
       ecs-memory: 4096
       ecs-cluster-name: 'formsg-prod-ecs'
       ecs-service-name: 'formsg-prod-ecs-service'
@@ -37,7 +38,7 @@ jobs:
       codedeploy-appspec-path: deploy/appspec.yml
       codedeploy-deployment-group: 'formsg-prod-ecs-dg'
       # Datadog config
-      dd-env: 'production-iac'
+      dd-env: 'production'
     secrets:
       # AWS credentials and configuration
       aws-account-id: ${{ secrets.AWS_ACCOUNT_ID }}
@@ -48,3 +49,4 @@ jobs:
       dd-rum-client-token: ${{ secrets.DD_RUM_CLIENT_TOKEN }}
       dd-sample-rate: ${{ secrets.DD_SAMPLE_RATE }}
       DD_API_KEY: ${{ secrets.DD_API_KEY }}
+      S3_STATIC_ASSETS_BUCKET_NAME: ${{ secrets.S3_STATIC_ASSETS_BUCKET_NAME }}

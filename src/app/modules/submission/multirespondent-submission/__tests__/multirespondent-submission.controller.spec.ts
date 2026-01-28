@@ -1,9 +1,21 @@
 import expressHandler from '__tests__/unit/backend/helpers/jest-express'
 import { ObjectId } from 'bson'
 import { merge, omit } from 'lodash'
-import { Types } from 'mongoose'
+import { Document, Types } from 'mongoose'
 import { errAsync, ok, okAsync } from 'neverthrow'
-import { FormAuthType, FormMetadata, FormResponseMode } from 'shared/types'
+import {
+  BasicField,
+  DropdownFieldBase,
+  FormAuthType,
+  FormFieldDto,
+  FormMetadata,
+  FormResponseMode,
+  FormStatus,
+  PublicMultirespondentSubmissionDto,
+  SubmissionType,
+  WorkflowType,
+} from 'shared/types'
+import { Except } from 'type-fest'
 
 import * as AuthService from 'src/app/modules/auth/auth.service'
 import { DatabaseError } from 'src/app/modules/core/core.errors'
@@ -13,10 +25,15 @@ import {
   FormNotFoundError,
 } from 'src/app/modules/form/form.errors'
 import * as FormService from 'src/app/modules/form/form.service'
+import * as SubmissionService from 'src/app/modules/submission/submission.service'
 import { MissingUserError } from 'src/app/modules/user/user.errors'
 import * as UserService from 'src/app/modules/user/user.service'
 import { MailSendError } from 'src/app/services/mail/mail.errors'
-import { IMultirespondentSubmissionSchema } from 'src/types'
+import {
+  IMultirespondentSubmissionSchema,
+  MultirespondentSubmissionData,
+} from 'src/types'
+import { SnapshottedFormDef } from 'src/types/api'
 
 import {
   AttachmentUploadError,
@@ -27,16 +44,24 @@ import {
   SubmissionSaveError,
 } from '../../submission.errors'
 import {
+  handleGetMultirespondentSubmissionForRespondent,
   sendPendingMrfSubmissionReminderForTest,
   submitMultirespondentFormForTest,
   updateMultirespondentSubmissionForTest,
 } from '../multirespondent-submission.controller'
 import * as MultiRespondentSubmissionService from '../multirespondent-submission.service'
+import * as MultirespondentSubmissionUtils from '../multirespondent-submission.utils'
 
 jest.mock('src/app/modules/datadog/datadog.utils')
 
 jest.mock('src/app/modules/form/form.service')
 const MockFormService = jest.mocked(FormService)
+
+jest.mock('src/app/modules/submission/submission.service', () => ({
+  ...jest.requireActual('src/app/modules/submission/submission.service'),
+  getEncryptedSubmissionData: jest.fn(),
+}))
+const MockSubmissionService = jest.mocked(SubmissionService)
 
 jest.mock('src/app/modules/form/admin-form/admin-form.service', () => ({
   ...jest.requireActual('src/app/modules/form/admin-form/admin-form.service'),
@@ -77,6 +102,10 @@ describe('multirespondent-submision.controller', () => {
       .fn()
       .mockReturnValue(okAsync(mockMrfForm))
 
+    MockMultiRespondentSubmissionService.checkFormIsMultirespondent = jest
+      .fn()
+      .mockReturnValue(ok(mockMrfForm))
+
     MockMultiRespondentSubmissionService.createMultiRespondentFormSubmission =
       jest.fn().mockReturnValue(okAsync(mockMrfSubmission))
     MockMultiRespondentSubmissionService.updateMultiRespondentFormSubmission =
@@ -89,6 +118,118 @@ describe('multirespondent-submision.controller', () => {
 
   afterEach(() => {
     jest.clearAllMocks()
+  })
+
+  describe('handleGetMultirespondentSubmissionForRespondent', () => {
+    it('returns 200 ok with public multirespondent submission data response and invokes createPublicMultirespondentSubmissionDto to strip the sensitive information', async () => {
+      // Arrange
+      const mockReq = expressHandler.mockRequest({
+        params: {
+          formId: mockFormId,
+          submissionId: mockSubmissionId,
+        },
+        session: {
+          cookie: {
+            maxAge: 1000,
+          },
+        },
+        body: {} as any,
+      })
+      const mockRes = expressHandler.mockResponse()
+
+      const staticWorkflowStep = {
+        workflow_type: WorkflowType.Static,
+        edit: [],
+        emails: [],
+        _id: new ObjectId().toHexString(),
+      }
+      const dynamicWorkflowStep = {
+        workflow_type: WorkflowType.Dynamic,
+        edit: [],
+        field: new ObjectId().toHexString(),
+        _id: new ObjectId().toHexString(),
+      }
+      const dropdownField = {
+        _id: new ObjectId().toHexString(),
+        fieldType: BasicField.Dropdown,
+        title: 'Dropdown Field',
+        description: 'Dropdown Field Description',
+        required: true,
+        disabled: false,
+        fieldOptions: ['Option 1', 'Option 2'],
+        optionsToRecipientsMap: {
+          'Option 1': ['recipient1@example.com', 'recipient2@example.com'],
+          'Option 2': ['recipient3@example.com'],
+        },
+      } as FormFieldDto<DropdownFieldBase>
+      const mockSubmissionData = {
+        _id: mockSubmissionId,
+        form_fields: [dropdownField],
+        form_logics: [],
+        workflow: [staticWorkflowStep, dynamicWorkflowStep],
+        attachmentMetadata: undefined,
+        version: 1,
+        mrfVersion: 1,
+        submissionType: SubmissionType.Multirespondent,
+        encryptedContent: 'encryptedContent',
+        encryptedSubmissionSecretKey: 'encryptedSubmissionSecretKey',
+        submissionPublicKey: 'submissionPublicKey',
+        workflowStep: 0,
+        submittedSteps: [],
+        created: new Date('2025-10-21T06:19:33.527Z'),
+      } as Except<MultirespondentSubmissionData, keyof Document>
+
+      const mockStrippedPublicMultirespondentSubmissionDto = {
+        ...omit(mockSubmissionData, ['_id', 'created', 'submittedSteps']),
+        refNo: mockSubmissionId as any,
+        submissionTime: 'Tue, 21 Oct 2025, 02:19:33 PM',
+        attachmentMetadata: {},
+        mrfMeta: {
+          workflowCurrentStepNumber: 1,
+          workflowNumTotalSteps: 2,
+          workflowStatus: undefined,
+          lastSubmittedAt: undefined,
+          hasNextStepRecipientEmails: false,
+        },
+        workflow: [omit(staticWorkflowStep, 'emails'), dynamicWorkflowStep],
+        form_fields: [omit(dropdownField, 'optionsToRecipientsMap')],
+      } as PublicMultirespondentSubmissionDto
+
+      MockFormService.retrieveFullFormById = jest.fn().mockReturnValue(
+        okAsync({
+          _id: mockFormId,
+          responseMode: FormResponseMode.Multirespondent,
+          title: 'Mock Form',
+          status: FormStatus.Public,
+        }),
+      )
+
+      MockSubmissionService.getEncryptedSubmissionData.mockReturnValue(
+        okAsync(mockSubmissionData as MultirespondentSubmissionData),
+      )
+      const createPublicMultirespondentSubmissionDtoSpy = jest.spyOn(
+        MultirespondentSubmissionUtils,
+        'createPublicMultirespondentSubmissionDto',
+      )
+
+      // Act
+      await handleGetMultirespondentSubmissionForRespondent(
+        mockReq,
+        mockRes,
+        jest.fn(),
+      )
+
+      // Assert
+      // Public multirespondent submission data response is stripped of sensitive information
+      expect(mockRes.json).toHaveBeenCalledWith(
+        mockStrippedPublicMultirespondentSubmissionDto,
+      )
+      // createPublicMultirespondentSubmissionDto is invoked to perform the stripping of sensitive information
+      expect(createPublicMultirespondentSubmissionDtoSpy).toHaveBeenCalledWith(
+        mockSubmissionData,
+        {},
+      )
+    })
   })
 
   describe('submitMultirespondentForm', () => {
@@ -153,6 +294,9 @@ describe('multirespondent-submision.controller', () => {
         form: mockSubmitMrfReq.formsg.formDef,
         encryptedPayload: mockSubmitMrfReq.formsg.encryptedPayload,
         submissionId: mockSubmissionId,
+        submission: {
+          _id: mockSubmissionId,
+        },
       })
       // Expect 200 ok
       expect(mockRes.status).not.toHaveBeenCalled() // default is 200 ok
@@ -323,7 +467,7 @@ describe('multirespondent-submision.controller', () => {
   })
 
   describe('updateMultirespondentSubmission', () => {
-    it('returns 200 ok when form validation passes and invokes updateMultiRespondentFormSubmission and performMultiRespondentPostSubmissionUpdateActions', async () => {
+    it('returns 400 bad request if snapshottedFormDef is not provided when updating mrf submission', async () => {
       // Arrange
       const mockReq = expressHandler.mockRequest({
         params: {
@@ -355,6 +499,60 @@ describe('multirespondent-submision.controller', () => {
       await updateMultirespondentSubmissionForTest(mockSubmitMrfReq, mockRes)
 
       // Assert
+      expect(mockRes.status).toHaveBeenCalledWith(400)
+      expect(mockRes.json).toHaveBeenCalledWith({
+        message:
+          'The form submission could not be processed. Please try again.',
+      })
+    })
+
+    it('returns 200 ok when form validation passes and invokes updateMultiRespondentFormSubmission and performMultiRespondentPostSubmissionUpdateActions', async () => {
+      // Arrange
+      const mockReq = expressHandler.mockRequest({
+        params: {
+          formId: mockFormId,
+          submissionId: mockSubmissionId,
+        },
+        body: {} as any,
+      })
+      const mockSubmitMrfReq = merge(mockReq, {
+        formsg: {
+          formDef: {
+            _id: mockFormId,
+            authType: FormAuthType.NIL,
+            getUniqueMyInfoAttrs: jest.fn().mockReturnValue([]),
+          },
+          snapshottedFormDef: {
+            _id: mockFormId,
+            form_fields: [],
+            form_logics: [],
+            workflow: [],
+            emails: [],
+            stepOneEmailNotificationFieldId: '',
+            stepsToNotify: [],
+            hasRespondentCopy: false,
+            title: 'Mock snapshotted form def',
+            webhook: {
+              url: '',
+              isRetryEnabled: false,
+            },
+          } as SnapshottedFormDef,
+          encryptedPayload: {
+            encryptedContent: 'encryptedContent',
+            version: 1,
+            submissionPublicKey: 'submissionPublicKey',
+            encryptedSubmissionSecretKey: 'encryptedSubmissionSecretKey',
+            responses: {},
+            workflowStep: 0,
+          },
+        } as any,
+      })
+      const mockRes = expressHandler.mockResponse()
+
+      // Act
+      await updateMultirespondentSubmissionForTest(mockSubmitMrfReq, mockRes)
+
+      // Assert
       // save submission is invoked with correct args
       expect(
         MockMultiRespondentSubmissionService.updateMultiRespondentFormSubmission,
@@ -369,7 +567,7 @@ describe('multirespondent-submision.controller', () => {
       ).toEqual({
         submissionId: mockSubmissionId,
         encryptedPayload: mockSubmitMrfReq.formsg.encryptedPayload,
-        form: mockSubmitMrfReq.formsg.formDef,
+        snapshottedFormDef: mockSubmitMrfReq.formsg.snapshottedFormDef,
       })
 
       // Assert post save actions are invoked with correct args
@@ -383,9 +581,12 @@ describe('multirespondent-submision.controller', () => {
           'logMeta',
         ),
       ).toEqual({
-        form: mockSubmitMrfReq.formsg.formDef,
+        snapshottedFormDef: mockSubmitMrfReq.formsg.snapshottedFormDef,
         encryptedPayload: mockSubmitMrfReq.formsg.encryptedPayload,
         submissionId: mockSubmissionId,
+        submission: {
+          _id: mockSubmissionId,
+        },
       })
       // Expect 200 ok
       expect(mockRes.status).not.toHaveBeenCalled() // default is 200 ok
@@ -410,6 +611,21 @@ describe('multirespondent-submision.controller', () => {
             authType: FormAuthType.NIL,
             getUniqueMyInfoAttrs: jest.fn().mockReturnValue([]),
           },
+          snapshottedFormDef: {
+            _id: mockFormId,
+            form_fields: [],
+            form_logics: [],
+            workflow: [],
+            emails: [],
+            stepOneEmailNotificationFieldId: '',
+            stepsToNotify: [],
+            hasRespondentCopy: false,
+            title: 'Mock snapshotted form def',
+            webhook: {
+              url: '',
+              isRetryEnabled: false,
+            },
+          } as SnapshottedFormDef,
           encryptedPayload: {
             encryptedContent: 'encryptedContent',
             version: 1,
@@ -452,6 +668,21 @@ describe('multirespondent-submision.controller', () => {
             authType: FormAuthType.NIL,
             getUniqueMyInfoAttrs: jest.fn().mockReturnValue([]),
           },
+          snapshottedFormDef: {
+            _id: mockFormId,
+            form_fields: [],
+            form_logics: [],
+            workflow: [],
+            emails: [],
+            stepOneEmailNotificationFieldId: '',
+            stepsToNotify: [],
+            hasRespondentCopy: false,
+            title: 'Mock snapshotted form def',
+            webhook: {
+              url: '',
+              isRetryEnabled: false,
+            },
+          } as SnapshottedFormDef,
           encryptedPayload: {
             encryptedContent: 'encryptedContent',
             version: 1,
@@ -494,6 +725,21 @@ describe('multirespondent-submision.controller', () => {
             authType: FormAuthType.NIL,
             getUniqueMyInfoAttrs: jest.fn().mockReturnValue([]),
           },
+          snapshottedFormDef: {
+            _id: mockFormId,
+            form_fields: [],
+            form_logics: [],
+            workflow: [],
+            emails: [],
+            stepOneEmailNotificationFieldId: '',
+            stepsToNotify: [],
+            hasRespondentCopy: false,
+            title: 'Mock snapshotted form def',
+            webhook: {
+              url: '',
+              isRetryEnabled: false,
+            },
+          } as SnapshottedFormDef,
           encryptedPayload: {
             encryptedContent: 'encryptedContent',
             version: 1,
@@ -536,6 +782,21 @@ describe('multirespondent-submision.controller', () => {
             authType: FormAuthType.NIL,
             getUniqueMyInfoAttrs: jest.fn().mockReturnValue([]),
           },
+          snapshottedFormDef: {
+            _id: mockFormId,
+            form_fields: [],
+            form_logics: [],
+            workflow: [],
+            emails: [],
+            stepOneEmailNotificationFieldId: '',
+            stepsToNotify: [],
+            hasRespondentCopy: false,
+            title: 'Mock snapshotted form def',
+            webhook: {
+              url: '',
+              isRetryEnabled: false,
+            },
+          } as SnapshottedFormDef,
           encryptedPayload: {
             encryptedContent: 'encryptedContent',
             version: 1,
@@ -575,6 +836,21 @@ describe('multirespondent-submision.controller', () => {
             authType: FormAuthType.NIL,
             getUniqueMyInfoAttrs: jest.fn().mockReturnValue([]),
           },
+          snapshottedFormDef: {
+            _id: mockFormId,
+            form_fields: [],
+            form_logics: [],
+            workflow: [],
+            emails: [],
+            stepOneEmailNotificationFieldId: '',
+            stepsToNotify: [],
+            hasRespondentCopy: false,
+            title: 'Mock snapshotted form def',
+            webhook: {
+              url: '',
+              isRetryEnabled: false,
+            },
+          } as SnapshottedFormDef,
           encryptedPayload: {
             encryptedContent: 'encryptedContent',
             version: 1,

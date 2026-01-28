@@ -11,7 +11,7 @@ interface FormSingpassAuthToggleProps {
   isDisabled: boolean
 }
 
-const DEFAULT_FORM_AUTH_TYPE = FormAuthType.SGID
+const DEFAULT_FORM_AUTH_TYPE = FormAuthType.MyInfo
 
 export const FormSingpassAuthToggle = ({
   settings,
@@ -33,7 +33,7 @@ export const FormSingpassAuthToggle = ({
 
   return (
     <Toggle
-      containerStyles={{ mb: '1rem', opacity: isDisabled ? 0.3 : 1 }}
+      containerStyles={{ mb: '1rem', opacity: isDisabled ? 0.8 : 1 }}
       isDisabled={isDisabled}
       isLoading={!settings || mutateFormAuthType.isLoading}
       isChecked={isSingpassAuthEnabled}

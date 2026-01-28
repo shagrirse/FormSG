@@ -1,7 +1,7 @@
-import { useMemo } from 'react'
 import { Controller, useFormContext } from 'react-hook-form'
+import { Examples } from 'libphonenumber-js'
 
-import { createHomeNoValidationRules } from '~utils/fieldValidation'
+import { useHomeNoValidationRules } from '~utils/fieldValidation'
 import PhoneNumberInput from '~components/PhoneNumberInput'
 import landlineExamples from '~components/PhoneNumberInput/resources/examples.landline.json'
 
@@ -18,9 +18,9 @@ export const HomeNoField = ({
   disableRequiredValidation,
   isHighContrast,
 }: HomeNoFieldProps): JSX.Element => {
-  const validationRules = useMemo(
-    () => createHomeNoValidationRules(schema, disableRequiredValidation),
-    [schema, disableRequiredValidation],
+  const validationRules = useHomeNoValidationRules(
+    schema,
+    disableRequiredValidation,
   )
 
   const { control } = useFormContext<SingleAnswerFieldInput>()
@@ -35,7 +35,7 @@ export const HomeNoField = ({
           <PhoneNumberInput
             autoComplete="tel"
             allowInternational={schema.allowIntlNumbers}
-            examples={landlineExamples}
+            examples={landlineExamples as Examples}
             // Remove placeholder when field is disabled, to avoid confusion if
             // the field is prefilled or not (placeholder and prefill look similar)
             examplePlaceholder={schema.disabled ? 'off' : undefined}

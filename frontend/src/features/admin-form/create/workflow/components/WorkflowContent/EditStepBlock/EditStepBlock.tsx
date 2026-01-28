@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef } from 'react'
 import { useForm } from 'react-hook-form'
-import { Box, Divider, Stack } from '@chakra-ui/react'
+import { Divider, Stack } from '@chakra-ui/react'
 
 import {
   FormWorkflowStep,
@@ -16,7 +16,6 @@ import {
   useAdminWorkflowStore,
 } from '../../../adminWorkflowStore'
 import { EditStepInputs } from '../../../types'
-import { StepLabel } from '../StepLabel'
 import { isFirstStepByStepNumber } from '../utils/isFirstStepByStepNumber'
 
 import { ApprovalsBlock } from './ApprovalsBlock'
@@ -151,13 +150,7 @@ export const EditStepBlock = ({
       transitionProperty="common"
       transitionDuration="normal"
     >
-      {user?.betaFlags?.statusTracker ? (
-        <StepNameBlock formMethods={formMethods} stepNumber={stepNumber} />
-      ) : (
-        <Box px={{ base: '1.5rem', md: '2rem' }}>
-          <StepLabel stepNumber={stepNumber} />
-        </Box>
-      )}
+      <StepNameBlock formMethods={formMethods} stepNumber={stepNumber} />
       <Divider />
       <RespondentBlock
         user={user}
@@ -166,7 +159,11 @@ export const EditStepBlock = ({
         isLoading={_isLoading}
       />
       <Divider />
-      <QuestionsBlock formMethods={formMethods} isLoading={_isLoading} />
+      <QuestionsBlock
+        formMethods={formMethods}
+        isLoading={_isLoading}
+        isFirstStep={isFirstStep}
+      />
       {!isFirstStep ? (
         <>
           <Divider />

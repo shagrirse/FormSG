@@ -50,6 +50,8 @@ import {
   getTitleWithQuestionNumber,
 } from '../utils'
 
+import { closeModals } from './closeModals'
+
 type CreateFormReturn = {
   form: IFormSchema
   formResponseMode: E2eFormResponseMode
@@ -116,11 +118,17 @@ const addForm = async (
 
     await page.goto(`${ADMIN_FORM_PAGE_PREFIX}/${formId}`)
 
+    // Close any modals that may obstruct test flow
+    await closeModals(page)
+
     await page.getByRole('button', { name: 'Next' }).press('Escape')
 
     return { formId, formResponseMode }
   }
   await page.goto(DASHBOARD_PAGE)
+
+  // Close any modals that may obstruct test flow
+  await closeModals(page)
 
   // Press escape 5 times to get rid of any banners
   await page.keyboard.press('Escape')
@@ -135,10 +143,6 @@ const addForm = async (
 
   await page.getByText('Storage mode form').click()
   await page.getByRole('button', { name: 'Create form' }).click()
-
-  await page.getByRole('button', { name: 'Cancel' }).click()
-
-  await page.getByRole('button', { name: 'Close' }).click()
 
   const downloadButton = page.getByRole('button', { name: 'Download key' })
   await expect(downloadButton).toBeEnabled({ timeout: 15000 })
@@ -264,7 +268,7 @@ const addGeneralSettings = async (
   // Turn off captcha, since we can't test for that
   await page
     .locator('label', {
-      has: page.locator('[aria-label="Enable reCAPTCHA"]'),
+      has: page.locator('[aria-label="Enable human verification (reCAPTCHA)"]'),
     })
     .click()
 
@@ -329,7 +333,7 @@ const addAuthSettings = async (
 
   // Don't need to click if SGID is desired auth type
   // since SGID is the default once Singpass is enabled
-  if (formSettings.authType !== FormAuthType.SGID) {
+  if (formSettings.authType !== FormAuthType.MyInfo) {
     await page
       .locator('label', {
         has: page.locator(
@@ -343,9 +347,7 @@ const addAuthSettings = async (
   }
 
   switch (formSettings.authType) {
-    case FormAuthType.SP:
     case FormAuthType.CP:
-    case FormAuthType.MyInfo:
       if (!formSettings.esrvcId) throw new Error('No esrvcid provided!')
       await page.locator(`id=esrvcId`).fill(formSettings.esrvcId)
       await page.keyboard.press('Enter')

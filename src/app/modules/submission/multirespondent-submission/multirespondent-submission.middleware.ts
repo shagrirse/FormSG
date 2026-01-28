@@ -4,11 +4,15 @@ import { NextFunction } from 'express'
 import { StatusCodes } from 'http-status-codes'
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from 'neverthrow'
 
-import { IAttachmentInfo } from 'src/types'
+import {
+  IAttachmentInfo,
+  IMultirespondentSubmissionSchema,
+  IPopulatedMultirespondentForm,
+} from 'src/types'
 
-import { featureFlags } from '../../../../../shared/constants'
 import {
   BasicField,
+  FormAuthType,
   FormDto,
   FormFieldDto,
   FormResponseMode,
@@ -20,7 +24,10 @@ import {
   ParsedClearFormFieldResponsesV3,
   ParsedClearFormFieldResponseV3,
 } from '../../../../types/api'
-import { MultirespondentFormLoadedDto } from '../../../../types/api/multirespondent_submission'
+import {
+  MultirespondentFormLoadedDto,
+  SnapshottedFormDef,
+} from '../../../../types/api/multirespondent_submission'
 import formsgSdk from '../../../config/formsg-sdk'
 import { createLoggerWithLabel } from '../../../config/logger'
 import {
@@ -29,14 +36,22 @@ import {
 } from '../../../utils/logic-adaptor'
 import { createReqMeta } from '../../../utils/request'
 import { isFieldResponseV3Equal } from '../../../utils/response-v3'
+import { DatabaseError } from '../../core/core.errors'
 import * as FeatureFlagService from '../../feature-flags/feature-flags.service'
 import { assertFormAvailable } from '../../form/admin-form/admin-form.utils'
 import * as FormService from '../../form/form.service'
+import { MyInfoService } from '../../myinfo/myinfo.service'
+import { extractMyInfoLoginJwt } from '../../myinfo/myinfo.util'
+import { getOidcService } from '../../spcp/spcp.oidc.service'
+import { createNdiResponsesV3FromRecord } from '../../spcp/spcp.util'
+import * as VerifiedContentService from '../../verified-content/verified-content.service'
 import { FormsgReqBodyExistsError } from '../encrypt-submission/encrypt-submission.errors'
 import { CreateFormsgAndRetrieveFormMiddlewareHandlerType } from '../encrypt-submission/encrypt-submission.types'
 import {
   InvalidSubmissionTypeError,
+  MrfWorkflowOverflowError,
   ProcessingError,
+  SubmissionNotFoundError,
 } from '../submission.errors'
 import * as SubmissionService from '../submission.service'
 import {
@@ -95,15 +110,44 @@ export const validateMultirespondentRemindBody = celebrate({
   [Segments.BODY]: Joi.object({ submissionSecretKey: Joi.string().required() }),
 })
 
+const retrieveMultirespondentSubmissionIfExists = (
+  submissionId?: string,
+): ResultAsync<
+  IMultirespondentSubmissionSchema | undefined,
+  DatabaseError | SubmissionNotFoundError
+> => {
+  if (submissionId) {
+    return getMultirespondentSubmission(submissionId)
+  }
+  return okAsync(undefined)
+}
+
+const getSnapshottedFormDef = (
+  mrfSubmission: IMultirespondentSubmissionSchema,
+  currentFormDef: IPopulatedMultirespondentForm,
+): SnapshottedFormDef => ({
+  _id: mrfSubmission.form.toString(),
+  title: currentFormDef.title,
+  form_fields: mrfSubmission.form_fields,
+  form_logics: mrfSubmission.form_logics,
+  workflow: mrfSubmission.workflow,
+  webhook: currentFormDef.webhook,
+  admin: currentFormDef.admin,
+  emails: currentFormDef.emails,
+  stepOneEmailNotificationFieldId:
+    currentFormDef.stepOneEmailNotificationFieldId,
+  stepsToNotify: currentFormDef.stepsToNotify,
+})
+
 /**
  * Creates formsg namespace in req.body and populates it with featureFlags, formDef and encryptedFormDef.
  */
-export const createFormsgAndRetrieveForm = async (
+export const createFormsgAndRetrieveForm = (
   req: CreateFormsgAndRetrieveFormMiddlewareHandlerRequest,
   res: Parameters<CreateFormsgAndRetrieveFormMiddlewareHandlerType>[1],
   next: NextFunction,
 ) => {
-  const { formId } = req.params
+  const { formId, submissionId } = req.params
 
   const logMeta = {
     action: 'createFormsgAndRetrieveForm',
@@ -127,41 +171,68 @@ export const createFormsgAndRetrieveForm = async (
         error,
       })
     })
-    .map((featureFlags) => {
+    .andThen((featureFlags) => {
       // Step 2b: Set formsg.featureFlags
       formsg.featureFlags = featureFlags
-
-      // Step 3: Retrieve form
-      return FormService.retrieveFullFormById(formId)
+      // Step 3: Retrieve mrf submission if exists
+      return retrieveMultirespondentSubmissionIfExists(submissionId)
         .mapErr((error) => {
-          logger.warn({
-            message: 'Failed to retrieve form from database',
+          logger.error({
+            message: 'Error occurred whilst retrieving mrf submission',
             meta: logMeta,
             error,
           })
-          const { errorMessage, statusCode } = mapRouteError(error)
+          const { statusCode, errorMessage } = mapRouteError(error)
           return res.status(statusCode).json({ message: errorMessage })
         })
-        .map((formDef) =>
-          // Step 4a: Check form is multirespondent form
-          checkFormIsMultirespondent(formDef)
+        .map((mrfSubmission) => {
+          formsg.mrfSubmission = mrfSubmission
+          return mrfSubmission
+        })
+        .andThen((mrfSubmission) => {
+          // Step 4: Retrieve latest form definition
+          return FormService.retrieveFullFormById(formId)
             .mapErr((error) => {
-              logger.error({
-                message:
-                  'Trying to submit non-multirespondent submission on multirespondent submission endpoint',
+              logger.warn({
+                message: 'Failed to retrieve form from database',
                 meta: logMeta,
+                error,
               })
-              const { statusCode, errorMessage } = mapRouteError(error)
-              return res.status(statusCode).json({
-                message: errorMessage,
-              })
+              const { errorMessage, statusCode } = mapRouteError(error)
+              return res.status(statusCode).json({ message: errorMessage })
             })
-            .map((multirespondentFormDef) => {
-              // Step 4b: Set formsg.formDef
-              formsg.formDef = multirespondentFormDef
-
-              // Step 5: Check if form has public key
-              if (!multirespondentFormDef.publicKey) {
+            .andThen((latestFormDef) => {
+              // Step 4a: Check form is multirespondent form
+              return checkFormIsMultirespondent(latestFormDef).mapErr(
+                (error) => {
+                  logger.error({
+                    message:
+                      'Trying to submit non-multirespondent submission on multirespondent submission endpoint',
+                    meta: logMeta,
+                    error,
+                  })
+                  const { statusCode, errorMessage } = mapRouteError(error)
+                  return res.status(statusCode).json({
+                    message: errorMessage,
+                  })
+                },
+              )
+            })
+            .map((latestMrfFormDef) => {
+              // Step 4b: Set formsg.latestFormDef
+              formsg.formDef = latestMrfFormDef
+              // Step 4c: Set formsg.snapshottedFormDef if mrfSubmission exists
+              if (mrfSubmission) {
+                formsg.snapshottedFormDef = getSnapshottedFormDef(
+                  mrfSubmission,
+                  latestMrfFormDef,
+                )
+              }
+            })
+            .map(() => {
+              const formDef = formsg.formDef
+              // Step 5: Check that the form def has a public key
+              if (!formDef.publicKey) {
                 const message = 'Form does not have a public key'
                 logger.warn({ message, meta: logMeta })
                 return res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({
@@ -173,8 +244,8 @@ export const createFormsgAndRetrieveForm = async (
               req.formsg = formsg
 
               return next()
-            }),
-        )
+            })
+        })
     })
 }
 
@@ -189,46 +260,22 @@ type IdTaggedParsedClearAttachmentResponseV3 =
 const asyncVirusScanning = (
   responses: IdTaggedParsedClearAttachmentResponseV3[],
   formId: string,
-  enableGuardDutyLambdaInvoke: boolean | undefined,
 ): ResultAsync<
   IdTaggedParsedClearAttachmentResponseV3,
-  | SubmissionService.TriggerVirusScanThenDownloadCleanFileChainError
-  | SubmissionService.TriggerGuardDutyScanThenDownloadCleanFileChainError
+  SubmissionService.TriggerGuardDutyScanThenDownloadCleanFileChainError
 >[] => {
   return responses.map((response) => {
     // we'll invoke both lambdas and one of them will be in-shadow in order
     // for us to compare the reliability of the services
-    if (enableGuardDutyLambdaInvoke) {
-      // trigger virus-scanner, ignore results because running in-shadow
-      SubmissionService.triggerVirusScanThenDownloadCleanFileChain(
-        response.answer,
-        formId,
-      )
 
-      // use guardduty scan results
-      return SubmissionService.triggerGuardDutyScanThenDownloadCleanFileChain(
-        response.answer,
-        formId,
-      ).map((attachmentResponse) => ({
-        ...response,
-        answer: attachmentResponse,
-      }))
-    } else {
-      // trigger guardduty, ignore results because running in-shadow
-      SubmissionService.triggerGuardDutyScanThenDownloadCleanFileChain(
-        response.answer,
-        formId,
-      )
-
-      // use virus-scanner scan results
-      return SubmissionService.triggerVirusScanThenDownloadCleanFileChain(
-        response.answer,
-        formId,
-      ).map((attachmentResponse) => ({
-        ...response,
-        answer: attachmentResponse,
-      }))
-    }
+    // use guardduty scan results
+    return SubmissionService.triggerGuardDutyScanThenDownloadCleanFileChain(
+      response.answer,
+      formId,
+    ).map((attachmentResponse) => ({
+      ...response,
+      answer: attachmentResponse,
+    }))
   })
 }
 
@@ -243,14 +290,14 @@ const devModeSyncVirusScanning = async (
 ): Promise<
   Result<
     IdTaggedParsedClearAttachmentResponseV3,
-    SubmissionService.TriggerVirusScanThenDownloadCleanFileChainError
+    SubmissionService.TriggerGuardDutyScanThenDownloadCleanFileChainError
   >[]
 > => {
   const results = []
   for (const response of responses) {
     // await to pause for...of loop until the virus scanning and downloading of clean file is completed.
     const attachmentResponse =
-      await SubmissionService.triggerVirusScanThenDownloadCleanFileChain(
+      await SubmissionService.triggerGuardDutyScanThenDownloadCleanFileChain(
         response.answer,
         formId,
       )
@@ -275,7 +322,6 @@ export const scanAndRetrieveAttachments = async (
     action: 'scanAndRetrieveAttachments',
     ...createReqMeta(req),
   }
-  const gbGuardDuty = req.growthbook?.isOn(featureFlags.guardduty)
 
   // Step 1: Extract attachment responses into an array to prepare for virus scanning.
   const attachmentResponsesToRetrieve: IdTaggedParsedClearAttachmentResponseV3[] =
@@ -314,7 +360,6 @@ export const scanAndRetrieveAttachments = async (
           asyncVirusScanning(
             attachmentResponsesToRetrieve,
             req.formsg.formDef._id.toString(),
-            gbGuardDuty,
           ),
         )
 
@@ -388,6 +433,7 @@ export const validateMultirespondentSubmission = async (
   next: NextFunction,
 ) => {
   const { formId, submissionId } = req.params
+  const { mrfSubmission } = req.formsg
 
   const logMeta = {
     action: 'validateMultirespondentSubmission',
@@ -398,27 +444,27 @@ export const validateMultirespondentSubmission = async (
 
   return (
     // Step 0: Prepare by retrieving relevant reference data
-    okAsync(submissionId)
-      .andThen((submissionId) =>
+    ok(mrfSubmission)
+      .andThen((mrfSubmission) =>
         // Step 0a: If its an existing submission, use the reference data from
         // the submission rather than the form
-        submissionId
-          ? getMultirespondentSubmission(submissionId).map((submission) => ({
+        mrfSubmission
+          ? ok({
               previousSubmission: {
-                encryptedContent: submission.encryptedContent,
-                version: submission.version,
+                encryptedContent: mrfSubmission.encryptedContent,
+                version: mrfSubmission.version,
               },
-              workflowStep: submission.workflowStep + 1,
-              workflow: submission.workflow,
-              form_fields: submission.form_fields,
-              form_logics: submission.form_logics,
-            }))
-          : okAsync({
+              workflowStep: mrfSubmission.workflowStep + 1,
+              workflow: mrfSubmission.workflow,
+              form_fields: mrfSubmission.form_fields,
+              form_logics: mrfSubmission.form_logics,
+            })
+          : ok({
               previousSubmission: undefined,
               workflowStep: 0,
               workflow: req.formsg.formDef.workflow,
               form_fields: req.formsg.formDef.form_fields.map(
-                (ff) => ff.toObject() as FormFieldDto,
+                (ff_schema) => ff_schema.toObject() as FormFieldDto,
               ),
               form_logics: req.formsg.formDef.form_logics,
             }),
@@ -547,6 +593,16 @@ export const validateMultirespondentSubmission = async (
                     )
 
                     if (!resp) {
+                      logger.info({
+                        message:
+                          'Submitted response on a non-editable field which did not match previous response',
+                        meta: {
+                          ...logMeta,
+                          incomingResFieldType: incomingResField.fieldType,
+                          prevResFieldType: prevResField.fieldType,
+                        },
+                      })
+
                       return err(
                         new ProcessingError(
                           'Submitted response on a non-editable field which did not match previous response',
@@ -635,14 +691,23 @@ export const setCurrentWorkflowStep = async (
         ),
       )
       // Step 6: Retrieve presigned URLs for attachments.
-      .map((submissionData) => {
+      .andThen((submissionData) => {
         if (submissionData.submissionType !== SubmissionType.Multirespondent) {
           return errAsync(new InvalidSubmissionTypeError())
         }
         // Increment previous submission's workflow step by 1 to get workflow step of current submission
         req.body.workflowStep = submissionData.workflowStep + 1
-        return next()
+        // If the workflow step is greater than the submission's snapshot workflow length, this is an overflow.
+        if (req.body.workflowStep >= submissionData.workflow.length) {
+          return errAsync(
+            new MrfWorkflowOverflowError(
+              'Workflow step cannot be greater than the submission workflow length',
+            ),
+          )
+        }
+        return okAsync(undefined)
       })
+      .map(() => next())
       .mapErr((error) => {
         logger.error({
           message: 'Failure retrieving encrypted submission response',
@@ -737,6 +802,176 @@ export const encryptSubmission = async (
      * - Encrypted Attachment now encrypted by mrf / submission Public Key instead of Form Public Key
      */
     mrfVersion: 1,
+  }
+
+  return next()
+}
+
+/**
+ * Add and encrypt Ndi responses as verifiedContent, and add unencrypted Ndi responses to responses for email responses
+ */
+export const handleNdiResponses = async (
+  req: ProcessedMultirespondentSubmissionHandlerRequest,
+  res: Parameters<ProcessedMultirespondentSubmissionHandlerType>[1],
+  next: NextFunction,
+) => {
+  const formDef = req.formsg.formDef
+  const { formId } = req.params
+  const { authType } = formDef
+  const { submissionPublicKey } = req.formsg.encryptedPayload
+  const stepNumber: number = req.body.workflowStep
+    ? req.body.workflowStep + 1
+    : 1
+  let responses = req.formsg.encryptedPayload.responses // to add NDI data to responses (used for email payload downstream)
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let ndiResponses: Record<string, any> = {}
+
+  const logMeta = {
+    action: 'handleNdiResponses',
+    ...createReqMeta(req),
+    formId,
+  }
+
+  // 1. Handle Ndi data for current step
+  if (
+    formDef.isSubmitterIdCollectionEnabled &&
+    (authType === FormAuthType.CP || authType === FormAuthType.MyInfo) &&
+    stepNumber === 1 // TODO: update to handle when subsequent steps are Singpass-enabled
+  ) {
+    let userName
+    let userInfo
+    let jwtPayloadResult
+    switch (authType) {
+      case FormAuthType.CP: {
+        const oidcService = getOidcService(FormAuthType.CP)
+        jwtPayloadResult = await oidcService
+          .extractJwt(req.cookies)
+          .asyncAndThen((jwt) => oidcService.extractJwtPayload(jwt))
+
+        if (jwtPayloadResult.isOk()) {
+          userName = jwtPayloadResult.value.userName
+          userInfo = jwtPayloadResult.value.userInfo
+        }
+        break
+      }
+      case FormAuthType.MyInfo: {
+        jwtPayloadResult = await extractMyInfoLoginJwt(req.cookies, authType)
+          .andThen(MyInfoService.verifyLoginJwt)
+          .map(({ uinFin }) => {
+            return uinFin
+          })
+
+        if (jwtPayloadResult.isOk()) {
+          userName = jwtPayloadResult.value
+        }
+        break
+      }
+      default:
+        logger.error({
+          message: `AuthType: ${authType} unsupported for handling NdiResponses (supported: [MyInfo, CP])`,
+          meta: logMeta,
+        })
+    }
+
+    if (jwtPayloadResult?.isErr()) {
+      const { statusCode, errorMessage } = mapRouteError(jwtPayloadResult.error)
+      logger.error({
+        message: `Failed to verify ${authType} JWT with auth client`,
+        meta: logMeta,
+        error: jwtPayloadResult.error,
+      })
+      return res.status(statusCode).json({
+        message: errorMessage,
+        spcpSubmissionFailure: true,
+      })
+    } else {
+      const verifiedContent = VerifiedContentService.getVerifiedContent({
+        type: authType,
+        data: {
+          uinFin: userName,
+          userInfo,
+          stepNumber: stepNumber,
+        },
+      })
+
+      if (verifiedContent.isErr()) {
+        const { error } = verifiedContent
+        logger.error({
+          message: 'Unable to get verified content',
+          meta: logMeta,
+          error,
+        })
+
+        return res
+          .status(StatusCodes.BAD_REQUEST)
+          .json({ message: 'Invalid data was found. Please submit again.' })
+      } else {
+        ndiResponses = {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          ...(verifiedContent.value as Record<string, any>),
+        }
+      }
+    }
+  }
+
+  // 2. Handle Ndi data for previous steps
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mrfSubmission = req.formsg.mrfSubmission
+  const prevSubmissionSecretKey = req.body.submissionSecretKey
+
+  if (mrfSubmission?.verifiedContent && prevSubmissionSecretKey) {
+    const prevDecryptedSubmission = formsgSdk.cryptoV3.decryptFromSubmissionKey(
+      prevSubmissionSecretKey,
+      {
+        encryptedContent: mrfSubmission.encryptedContent,
+        verifiedContent: mrfSubmission.verifiedContent,
+        version: mrfSubmission.version,
+      },
+    )
+
+    if (prevDecryptedSubmission?.verified) {
+      ndiResponses = { ...prevDecryptedSubmission.verified, ...ndiResponses }
+    } else {
+      logger.error({
+        message: 'Unable to get verified content',
+        meta: logMeta,
+      })
+
+      return res
+        .status(StatusCodes.BAD_REQUEST)
+        .json({ message: 'Invalid data was found. Please submit again.' })
+    }
+  }
+
+  // 3. Add collected Ndi data to responses for email payload
+  const emailNdiResponses = createNdiResponsesV3FromRecord(ndiResponses)
+  responses = { ...responses, ...emailNdiResponses }
+  req.formsg.encryptedPayload.responses = responses
+
+  // 4. Encrypt Ndi data with new submissionKey
+  if (Object.keys(ndiResponses).length !== 0) {
+    const encryptVerifiedContentResult =
+      VerifiedContentService.encryptVerifiedContent({
+        verifiedContent: ndiResponses,
+        formPublicKey: submissionPublicKey,
+      })
+
+    if (encryptVerifiedContentResult.isErr()) {
+      const { error } = encryptVerifiedContentResult
+      logger.error({
+        message: 'Unable to encrypt verified content',
+        meta: logMeta,
+        error,
+      })
+
+      return res
+        .status(StatusCodes.BAD_REQUEST)
+        .json({ message: 'Invalid data was found. Please submit again.' })
+    } else {
+      req.formsg.encryptedPayload.verifiedContent =
+        encryptVerifiedContentResult.value
+    }
   }
 
   return next()

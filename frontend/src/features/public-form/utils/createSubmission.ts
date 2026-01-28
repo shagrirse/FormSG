@@ -249,7 +249,6 @@ const createResponsesArray = (
   const transformedResponses = formFields
     .map((ff) => transformInputsToOutputs(ff, formInputs[ff._id]))
     .filter((output): output is FieldResponse => output !== null)
-
   return validateResponses(transformedResponses)
 }
 
@@ -399,6 +398,19 @@ const createResponsesV3 = (
       case BasicField.Section:
       case BasicField.Image:
       case BasicField.Statement: {
+        break
+      }
+      case BasicField.Signature: {
+        const input = formInputs[ff._id] as
+          | FormFieldValue<typeof ff.fieldType>
+          | undefined
+        // since default value is {type: '', value: []}, empty array = no input
+        if (input && input?.value.length > 0) {
+          returnedInputs[ff._id] = {
+            fieldType: ff.fieldType,
+            answer: input,
+          } as FieldResponseV3
+        }
         break
       }
       default: {

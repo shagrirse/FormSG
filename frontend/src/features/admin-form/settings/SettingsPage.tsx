@@ -12,6 +12,7 @@ import {
   TabPanels,
   Tabs,
 } from '@chakra-ui/react'
+import { useGrowthBook } from '@growthbook/growthbook-react'
 
 import { LanguageTranslation } from '~assets/icons/LanguageTranslation'
 import { ADMINFORM_RESULTS_SUBROUTE, ADMINFORM_ROUTE } from '~constants/routes'
@@ -50,6 +51,19 @@ export const SettingsPage = (): JSX.Element => {
     useAdminFormCollaborators(formId)
   const navigate = useNavigate()
 
+  // Used for feature flagging viewable toggles on settings page
+  const gb = useGrowthBook()
+  useEffect(() => {
+    if (gb) {
+      gb.setAttributes({
+        ...gb.getAttributes(),
+        formId,
+        adminEmail: user?.email,
+        adminAgency: user?.agency.shortName,
+      })
+    }
+  }, [gb, formId, user?.email, user?.agency.shortName])
+
   // Redirect view-only collaborators to results screen.
   useEffect(() => {
     if (!isCollabLoading && !hasEditAccess)
@@ -86,7 +100,6 @@ export const SettingsPage = (): JSX.Element => {
       icon: BiMailSend,
       component: SettingsEmailsPage,
       path: 'email-notifications',
-      showRedDot: true,
     },
     {
       label: t('features.adminForm.settings.webhooks.title'),

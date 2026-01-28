@@ -3,17 +3,17 @@ name: CI
 on:
   push:
     branches-ignore:
-      - staging
-      - staging-alt
-      - staging-alt2
+      - stg
+      - stg-alt
+      - stg-alt2
       - stg-alt3
       - uat
   pull_request:
     types: [opened, reopened]
     branches-ignore:
-      - staging
-      - staging-alt
-      - staging-alt2
+      - stg
+      - stg-alt
+      - stg-alt2
       - stg-alt3
       - uat
 
@@ -51,9 +51,9 @@ jobs:
         with:
           fetch-depth: 0
       - name: Use Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 22
           cache: 'npm'
           cache-dependency-path: '**/package-lock.json'
       - name: Cache Node modules
@@ -72,9 +72,9 @@ jobs:
           fetch-depth: 0
       - run: mkdir -p build-output/
       - name: Use Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 22
           cache: 'npm'
           cache-dependency-path: '**/package-lock.json'
       # Load cached node_modules
@@ -106,9 +106,9 @@ jobs:
         with:
           fetch-depth: 0
       - name: Use Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 22
           cache: 'npm'
           cache-dependency-path: '**/package-lock.json'
       # Load cached node_modules
@@ -140,9 +140,9 @@ jobs:
         with:
           fetch-depth: 0
       - name: Use Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 22
           cache: 'npm'
           cache-dependency-path: '**/package-lock.json'
       # Load cached node_modules
@@ -167,9 +167,9 @@ jobs:
         with:
           name: build-output
       - name: Use Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 22
           cache: 'npm'
           cache-dependency-path: '**/package-lock.json'
       # Load cached node_modules
@@ -179,8 +179,8 @@ jobs:
           path: '**/node_modules'
           key: ${{ runner.OS }}-node-modules-${{ hashFiles('**/package-lock.json') }}
           fail-on-cache-miss: true
-      - run: npm ci --prefix serverless/virus-scanner
       - run: npm ci --prefix serverless/virus-scanner-guardduty
+      - run: npm ci --prefix serverless/pdf-gen-sparticuz
       - name: Configure Datadog Test Visibility
         uses: datadog/test-visibility-github-action@v1.0.5
         with:
@@ -207,9 +207,9 @@ jobs:
         with:
           fetch-depth: 0
       - name: Use Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 22
           cache: 'npm'
           cache-dependency-path: '**/package-lock.json'
       # Load cached node_modules

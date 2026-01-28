@@ -1,16 +1,16 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Controller, useFormContext, useFormState } from 'react-hook-form'
+import { useTranslation } from 'react-i18next'
 import { Box, Flex, FormControl, Stack } from '@chakra-ui/react'
 
 import { validatePostalCode } from '~shared/utils/address-validation'
 
-import { VALID_POSTAL_CODE_NO_ADDRESS_ERROR } from '~constants/validation'
 import {
-  createBlockNumberValidationRules,
-  createLevelNumberValidationRules,
-  createPostalCodeValidationRules,
-  createStreetNameValidationRules,
-  createUnitNumberValidationRules,
+  useBlockNumberValidationRules,
+  useLevelNumberValidationRules,
+  usePostalCodeValidationRules,
+  useStreetNameValidationRules,
+  useUnitNumberValidationRules,
 } from '~utils/fieldValidation'
 import Button from '~components/Button'
 import FormErrorMessage from '~components/FormControl/FormErrorMessage'
@@ -39,31 +39,37 @@ export const AddressCompoundField = ({
     })
   const addressSubFieldErrors = errors?.[schema._id]?.addressSubFields
 
-  const postalCodeValidationRules = useMemo(
-    () => createPostalCodeValidationRules(schema, disableRequiredValidation),
-    [schema, disableRequiredValidation],
+  const postalCodeValidationRules = usePostalCodeValidationRules(
+    schema,
+    disableRequiredValidation,
   )
 
-  const blockNumberValidationRules = useMemo(
-    () => createBlockNumberValidationRules(schema, disableRequiredValidation),
-    [schema, disableRequiredValidation],
+  const blockNumberValidationRules = useBlockNumberValidationRules(
+    schema,
+    disableRequiredValidation,
   )
 
-  const streetNameValidationRules = useMemo(
-    () => createStreetNameValidationRules(schema, disableRequiredValidation),
-    [schema, disableRequiredValidation],
+  const streetNameValidationRules = useStreetNameValidationRules(
+    schema,
+    disableRequiredValidation,
   )
+
+  const { t } = useTranslation('translation', {
+    keyPrefix: 'utils.fieldValidation',
+  })
 
   const unitNumber = watch(`${schema._id}.addressSubFields.unitNumber`)
   const levelNumber = watch(`${schema._id}.addressSubFields.levelNumber`)
 
-  const levelNumberValidationRules = useMemo(() => {
-    return createLevelNumberValidationRules(schema, getValues)
-  }, [schema, getValues])
+  const levelNumberValidationRules = useLevelNumberValidationRules(
+    schema,
+    getValues,
+  )
 
-  const unitNumberValidationRules = useMemo(() => {
-    return createUnitNumberValidationRules(schema, getValues)
-  }, [schema, getValues])
+  const unitNumberValidationRules = useUnitNumberValidationRules(
+    schema,
+    getValues,
+  )
 
   useEffect(() => {
     if (unitNumber && levelNumber) {
@@ -106,11 +112,11 @@ export const AddressCompoundField = ({
         if (!result.success) {
           setError(`${schema._id}.addressSubFields.blockNumber`, {
             type: 'manual',
-            message: VALID_POSTAL_CODE_NO_ADDRESS_ERROR,
+            message: t('validPostalCodeNoAddress'),
           })
           setError(`${schema._id}.addressSubFields.streetName`, {
             type: 'manual',
-            message: VALID_POSTAL_CODE_NO_ADDRESS_ERROR,
+            message: t('validPostalCodeNoAddress'),
           })
           setValue(`${schema._id}.addressSubFields.blockNumber`, '') // reset values if verification failure
           setValue(`${schema._id}.addressSubFields.streetName`, '')
@@ -165,17 +171,18 @@ export const AddressCompoundField = ({
                   <Input
                     {...field}
                     aria-label={`${schema.questionNumber}. Postal Code`}
-                    placeholder="e.g. 650161"
+                    placeholder={schema.disabled ? undefined : 'e.g. 650161'}
                     isHighContrast={isHighContrast}
                   />
-                  <Button
-                    onClick={handleVerifyAddress}
-                    isLoading={isSubmitting}
-                    isDisabled={isButtonDisabled}
-                    isHighContrast={isHighContrast}
-                  >
-                    Find address
-                  </Button>
+                  {schema.disabled ? null : (
+                    <Button
+                      onClick={handleVerifyAddress}
+                      isLoading={isSubmitting}
+                      isDisabled={isButtonDisabled}
+                    >
+                      Find address
+                    </Button>
+                  )}
                 </Flex>
                 <FormErrorMessage>
                   {addressSubFieldErrors?.postalCode?.message}
@@ -206,7 +213,7 @@ export const AddressCompoundField = ({
               <Input
                 {...field}
                 aria-label={`${schema.questionNumber}. Block Number`}
-                placeholder="e.g. 161"
+                placeholder={schema.disabled ? undefined : 'e.g. 161'}
                 isHighContrast={isHighContrast}
               />
               <FormErrorMessage>
@@ -237,7 +244,9 @@ export const AddressCompoundField = ({
               <Input
                 {...field}
                 aria-label={`${schema.questionNumber}. Street name`}
-                placeholder="e.g. Bukit Batok Street 11"
+                placeholder={
+                  schema.disabled ? undefined : 'e.g. Bukit Batok Street 11'
+                }
                 onInput={(e: React.FormEvent<HTMLInputElement>) => {
                   const value = e.currentTarget.value
                   e.currentTarget.value = value.replace(/,/g, '') // Prevent commas
@@ -299,7 +308,7 @@ export const AddressCompoundField = ({
                 <Input
                   {...field}
                   aria-label={`${schema.questionNumber}. Level number`}
-                  placeholder="Level number"
+                  placeholder={schema.disabled ? undefined : 'Level number'}
                   isHighContrast={isHighContrast}
                 />
                 <FormErrorMessage>
@@ -326,7 +335,7 @@ export const AddressCompoundField = ({
                 <Input
                   {...field}
                   aria-label={`${schema.questionNumber}. Unit Number`}
-                  placeholder="Unit number"
+                  placeholder={schema.disabled ? undefined : 'Unit number'}
                   isHighContrast={isHighContrast}
                 />
                 <FormErrorMessage>

@@ -1,6 +1,6 @@
 import cuid from 'cuid'
 import { merge, mergeWith } from 'lodash'
-import { rest } from 'msw'
+import { delay as MswDelay, http, HttpResponse } from 'msw'
 
 import { PaymentChannel } from '~shared/types'
 import { AgencyId } from '~shared/types/agency'
@@ -10,6 +10,7 @@ import {
   FieldCreateDto,
   FormFieldDto,
   RatingShape,
+  TableFieldBase,
   TableFieldDto,
 } from '~shared/types/field'
 import {
@@ -963,122 +964,163 @@ export const createMockForm = (
   }
 }
 
+export const TABLE_FIELD_ADDITIONAL_ROWS_FIELD: FormFieldDto<TableFieldBase> = {
+  title: 'Table field for test',
+  description: 'No more table field regressions please',
+  required: true,
+  disabled: false,
+  fieldType: BasicField.Table,
+  _id: 'table-field-for-test-id',
+  globalId: 'not-used',
+  minimumRows: 2,
+  columns: [
+    {
+      title: 'Short text column',
+      required: true,
+      columnType: BasicField.ShortText,
+      ValidationOptions: {
+        customVal: null,
+        selectedValidation: null,
+      },
+      _id: 'table-field-for-test-id-col-1',
+    },
+    {
+      title: 'Dropdown column',
+      required: true,
+      columnType: BasicField.Dropdown,
+      fieldOptions: ['cool beans', 'see ya later alligator', 'far out man'],
+      _id: 'table-field-for-test-id-col-2',
+    },
+  ],
+  addMoreRows: true,
+  maximumRows: 4,
+}
+
 export const createFormBuilderMocks = (
   props: Partial<AdminFormDto> = {},
   delay: number | 'infinite' | 'real' = 0,
 ) => {
   const { form } = createMockForm(props)
 
-  const getAdminFormResponse = (): ReturnType<(typeof rest)['get']> => {
-    return rest.get<AdminFormViewDto>(
+  const getAdminFormResponse = (): ReturnType<(typeof http)['get']> => {
+    return http.get<{ formId: string }, never, { form: AdminFormDto }>(
       '/api/v3/admin/forms/:formId',
-      (req, res, ctx) => {
-        return res(
-          ctx.delay(delay),
-          ctx.status(200),
-          ctx.json({ form: { ...form, _id: req.params.formId as FormId } }),
+      async ({ params }) => {
+        await MswDelay(delay)
+        return HttpResponse.json(
+          { form: { ...form, _id: params.formId as FormId } },
+          {
+            status: 200,
+          },
         )
       },
     )
   }
 
   const createSingleField = () => {
-    return rest.post<FieldCreateDto, { formId: string }, FormFieldDto>(
+    return http.post<{ formId: string }, FieldCreateDto, FormFieldDto>(
       '/api/v3/admin/forms/:formId/fields',
-      (req, res, ctx) => {
+      async ({ request }) => {
+        const body = await request.json()
+        const url = new URL(request.url)
+
         const newField = {
-          ...req.body,
+          ...body,
           _id: cuid(),
         } as FormFieldDto
-        if (req.body.fieldType === BasicField.Table) {
-          ;(newField as TableFieldDto).columns = req.body.columns.map(
-            (col) => ({
-              ...col,
-              _id: cuid(),
-            }),
-          )
+        if (body.fieldType === BasicField.Table) {
+          ;(newField as TableFieldDto).columns = body.columns.map((col) => ({
+            ...col,
+            _id: cuid(),
+          }))
         }
+
         const newIndex = parseInt(
-          req.url.searchParams.get('to') ?? `${form.form_fields.length}`,
+          url.searchParams.get('to') ?? `${form.form_fields.length}`,
         )
         form.form_fields = insertAt(form.form_fields, newIndex, newField)
-        return res(ctx.delay(delay), ctx.status(200), ctx.json(newField))
+        await MswDelay(delay)
+        return HttpResponse.json(newField, { status: 200 })
       },
     )
   }
 
   const updateSingleField = () => {
-    return rest.put<
-      FormFieldDto,
+    return http.put<
       { formId: string; fieldId: string },
+      FormFieldDto,
       FormFieldDto
-    >('/api/v3/admin/forms/:formId/fields/:fieldId', (req, res, ctx) => {
-      const index = form.form_fields.findIndex(
-        (field) => field._id === req.params.fieldId,
-      )
-      form.form_fields.splice(index, 1, req.body)
-      return res(ctx.delay(delay), ctx.status(200), ctx.json(req.body))
-    })
+    >(
+      '/api/v3/admin/forms/:formId/fields/:fieldId',
+      async ({ request, params }) => {
+        const body = await request.json()
+        const index = form.form_fields.findIndex(
+          (field) => field._id === params.fieldId,
+        )
+        form.form_fields.splice(index, 1, body)
+        await MswDelay(delay)
+        return HttpResponse.json(body, { status: 200 })
+      },
+    )
   }
 
   const reorderField = () => {
-    return rest.post<
-      Record<string, never>,
+    return http.post<
       { formId: string; fieldId: string },
+      never,
       FormFieldDto[]
     >(
       '/api/v3/admin/forms/:formId/fields/:fieldId/reorder',
-      (req, res, ctx) => {
+      async ({ params, request }) => {
+        const url = new URL(request.url)
+
         const fromIndex = form.form_fields.findIndex(
-          (field) => field._id === req.params.fieldId,
+          (field) => field._id === params.fieldId,
         )
         form.form_fields = reorder(
           form.form_fields,
           fromIndex,
-          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-          parseInt(req.url.searchParams.get('to')!),
+          parseInt(url.searchParams.get('to')!),
         )
-        return res(
-          ctx.delay(delay),
-          ctx.status(200),
-          ctx.json(form.form_fields),
-        )
+
+        await MswDelay(delay)
+        return HttpResponse.json(form.form_fields, { status: 200 })
       },
     )
   }
 
   const duplicateField = () => {
-    return rest.post<
-      Record<string, never>,
-      { formId: string; fieldId: string },
-      FormFieldDto
-    >(
+    return http.post<{ formId: string; fieldId: string }, never, FormFieldDto>(
       '/api/v3/admin/forms/:formId/fields/:fieldId/duplicate',
-      (req, res, ctx) => {
+      async ({ params }) => {
+        await MswDelay(delay)
         const fieldToCopyIndex = form.form_fields.findIndex(
-          (field) => field._id === req.params.fieldId,
+          (field) => field._id === params.fieldId,
         )
         const newField = {
           ...form.form_fields[fieldToCopyIndex],
           _id: cuid(),
         }
         form.form_fields.push(newField)
-        return res(ctx.delay(delay), ctx.status(200), ctx.json(newField))
+
+        return HttpResponse.json(newField, { status: 200 })
       },
     )
   }
 
   const deleteField = () => {
-    return rest.delete<
-      Record<string, never>,
+    return http.delete<
       { formId: string; fieldId: string },
+      never,
       FormFieldDto
-    >('/api/v3/admin/forms/:formId/fields/:fieldId', (req, res, ctx) => {
+    >('/api/v3/admin/forms/:formId/fields/:fieldId', async ({ params }) => {
       const fieldToDeleteIndex = form.form_fields.findIndex(
-        (field) => field._id === req.params.fieldId,
+        (field) => field._id === params.fieldId,
       )
       form.form_fields.splice(fieldToDeleteIndex, 1)
-      return res(ctx.delay(delay), ctx.status(200))
+
+      await MswDelay(delay)
+      return new HttpResponse(null, { status: 200 })
     })
   }
 
@@ -1096,22 +1138,21 @@ export const getStorageSubmissionMetadataResponse = (
   props: Partial<SubmissionMetadataList> = {},
   delay: number | 'infinite' | 'real' = 0,
 ) => {
-  return rest.get<SubmissionMetadataList>(
+  return http.get<{ formId: string }, never, SubmissionMetadataList>(
     '/api/v3/admin/forms/:formId/submissions/metadata',
-    (req, res, ctx) => {
-      const pageNum = parseInt(req.url.searchParams.get('page') ?? '1')
-      return res(
-        ctx.delay(delay),
-        ctx.status(200),
-        ctx.json<SubmissionMetadataList>(
-          merge(
-            {
-              count: DEFAULT_STORAGE_METADATA.flat().length,
-              metadata: DEFAULT_STORAGE_METADATA[pageNum - 1],
-            },
-            props,
-          ),
+    async ({ request }) => {
+      const url = new URL(request.url)
+      const pageNum = parseInt(url.searchParams.get('page') ?? '1')
+      await MswDelay(delay)
+      return HttpResponse.json(
+        merge(
+          {
+            count: DEFAULT_STORAGE_METADATA.flat().length,
+            metadata: DEFAULT_STORAGE_METADATA[pageNum - 1],
+          },
+          props,
         ),
+        { status: 200 },
       )
     },
   )
@@ -1121,55 +1162,57 @@ export const getMultiRespondentSubmissionMetadataResponse = (
   props: Partial<SubmissionMetadataList> = {},
   delay: number | 'infinite' | 'real' = 0,
 ) => {
-  return rest.get<SubmissionMetadataList>(
+  return http.get<{ formId: string }, never, SubmissionMetadataList>(
     '/api/v3/admin/forms/:formId/submissions/metadata',
-    (req, res, ctx) => {
-      const pageNum = parseInt(req.url.searchParams.get('page') ?? '1')
-      return res(
-        ctx.delay(delay),
-        ctx.status(200),
-        ctx.json<SubmissionMetadataList>(
-          merge(
-            {
-              count: DEFAULT_MULTIRESPONDENT_METADATA.flat().length,
-              metadata: DEFAULT_MULTIRESPONDENT_METADATA[pageNum - 1],
-            },
-            props,
-          ),
+    async ({ request }) => {
+      const url = new URL(request.url)
+      const pageNum = parseInt(url.searchParams.get('page') ?? '1')
+      await MswDelay(delay)
+      return HttpResponse.json(
+        merge(
+          {
+            count: DEFAULT_MULTIRESPONDENT_METADATA.flat().length,
+            metadata: DEFAULT_MULTIRESPONDENT_METADATA[pageNum - 1],
+          },
+          props,
         ),
+        { status: 200 },
       )
     },
   )
 }
 
 export const createLogic = (delay?: number | 'infinite') => {
-  return rest.post<FormLogic>(
+  return http.post<{ formId: string }, FormLogic, FormLogic>(
     '/api/v3/admin/forms/:formId/logic',
-    (req, res, ctx) => {
+    async ({ request }) => {
+      const body = await request.json()
       const newLogic = {
-        ...req.body,
+        ...body,
         _id: cuid(),
       }
-      return res(ctx.delay(delay), ctx.status(200), ctx.json(newLogic))
+      await MswDelay(delay)
+      return HttpResponse.json(newLogic, { status: 200 })
     },
   )
 }
 
 export const deleteLogic = (delay?: number | 'infinite') => {
-  return rest.delete(
+  return http.delete<{ formId: string; logicId: string }>(
     '/api/v3/admin/forms/:formId/logic/:logicId',
-    (_req, res, ctx) => {
-      return res(ctx.delay(delay), ctx.status(200))
+    async () => {
+      await MswDelay(delay)
+      return HttpResponse.json(null, { status: 200 })
     },
   )
 }
 
 export const getAdminForms = {
   empty: () =>
-    rest.get<AdminDashboardFormMetaDto[]>(
+    http.get<never, never, AdminDashboardFormMetaDto[]>(
       '/api/v3/admin/forms',
-      (req, res, ctx) => {
-        return res(ctx.json([]))
+      () => {
+        return HttpResponse.json([])
       },
     ),
 }

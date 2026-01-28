@@ -2,6 +2,7 @@ import { memo, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { BiDownload } from 'react-icons/bi'
 import { Stack, Table, Tbody, Td, Text, Tr } from '@chakra-ui/react'
+import { FieldType } from '@opengovsg/formsg-sdk/dist/types'
 
 import { BasicField } from '~shared/types'
 import { handleAddressResponseDisplay } from '~shared/utils/address'
@@ -13,6 +14,7 @@ import Spinner from '~components/Spinner'
 import { AugmentedDecryptedResponse } from '../ResponsesPage/storage/utils/augmentDecryptedResponses'
 
 import { useMutateDownloadAttachments } from './mutations'
+import { SignatureCanvas } from './SignatureCanvas'
 
 export interface DecryptedRowBaseProps {
   row: AugmentedDecryptedResponse
@@ -123,9 +125,18 @@ const DecryptedAddressRow = ({ row }: DecryptedRowBaseProps): JSX.Element => {
   )
 }
 
+const DecryptedSignatureRow = ({ row }: DecryptedRowBaseProps): JSX.Element => {
+  return (
+    <Stack>
+      <DecryptedQuestionLabel row={row} />
+      <SignatureCanvas row={row} />
+    </Stack>
+  )
+}
+
 export const DecryptedRow = memo(
   ({ row, attachmentDecryptionKey }: DecryptedRowProps): JSX.Element => {
-    switch (row.fieldType) {
+    switch (row.fieldType as FieldType) {
       case BasicField.Section:
         return <DecryptedHeaderRow row={row} />
       case BasicField.Attachment:
@@ -139,6 +150,8 @@ export const DecryptedRow = memo(
         return <DecryptedTableRow row={row} />
       case BasicField.Address:
         return <DecryptedAddressRow row={row} />
+      case BasicField.Signature:
+        return <DecryptedSignatureRow row={row} />
       default:
         return (
           <Stack>

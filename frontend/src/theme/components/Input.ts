@@ -59,14 +59,16 @@ const outlineVariant = (props: StyleFunctionProps) => {
       _disabled: {
         bg: 'neutral.200',
         borderColor: 'neutral.400',
-        color: 'neutral.500',
+        color: 'neutral.800',
         cursor: 'not-allowed',
         opacity: 1,
         _hover: {
           bg: 'neutral.200',
+          color: 'neutral.800',
         },
         _active: {
           bg: 'neutral.200',
+          color: 'neutral.800',
         },
       },
       _invalid: {
@@ -93,20 +95,6 @@ const outlineVariant = (props: StyleFunctionProps) => {
         borderColor: getColor(theme, fc),
         boxShadow: `0 0 0 1px ${getColor(theme, fc)}`,
       },
-      ...(isPrefilled
-        ? {
-            bg: 'warning.100',
-            _disabled: {
-              bg: 'warning.100',
-            },
-            _hover: {
-              bg: 'warning.100',
-            },
-            _active: {
-              bg: 'warning.100',
-            },
-          }
-        : {}),
     },
     success: {
       pointerEvents: 'none',

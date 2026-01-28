@@ -17,7 +17,6 @@ import {
   StorageFormSettings,
 } from '~shared/types/form'
 
-import { GUIDE_PREVENT_EMAIL_BOUNCE } from '~constants/links'
 import {
   useOptionalAdminEmailValidationRules,
   useRequiredAdminEmailValidationRules,
@@ -36,16 +35,19 @@ import { RespondentCopyToggle } from './EmailNotificationsSection/RespondentCopy
 interface EmailFormSectionProps {
   isDisabled: boolean
   settings: EmailFormSettings | StorageFormSettings
+  isHighContrast?: boolean
 }
 
 interface AdminEmailRecipientsInputProps {
   onSubmit: (params: { emails: string[] }) => void
+  isDisabled: boolean
 }
 
 const EMAILS_FIELD_NAME = 'emails'
 
 const AdminEmailRecipientsInput = ({
   onSubmit,
+  isDisabled,
 }: AdminEmailRecipientsInputProps): JSX.Element => {
   const { getValues, setValue, control, handleSubmit } = useFormContext<{
     emails: string[]
@@ -85,7 +87,7 @@ const AdminEmailRecipientsInput = ({
       }
       render={({ field }) => (
         <TagInput
-          placeholder={emailsFieldPlaceholder}
+          placeholder={isDisabled ? undefined : emailsFieldPlaceholder}
           {...field}
           value={field.value as string[]}
           tagValidation={isEmail}
@@ -99,11 +101,8 @@ const AdminEmailRecipientsInput = ({
 export const FormEmailSection = ({
   isDisabled,
   settings,
+  isHighContrast = true,
 }: EmailFormSectionProps): JSX.Element => {
-  //TODO: (Respondent Copy): Remove isTest and user when respondent copy is out of beta
-  const { user } = useUser()
-  const isTest = import.meta.env.STORYBOOK_NODE_ENV === 'test'
-
   const { t } = useTranslation()
   const initialEmailSet = useMemo(
     () => new Set(settings.emails),
@@ -143,18 +142,22 @@ export const FormEmailSection = ({
             isRequired={isEmailMode}
             useMarkdownForDescription
             description={DESCRIPTION_TEXT}
+            isHighContrast={isHighContrast}
           >
             {t(
               'features.adminForm.settings.emailNotifications.section.regular.label',
             )}
           </FormLabel>
-          <AdminEmailRecipientsInput onSubmit={handleSubmitEmails} />
+          <AdminEmailRecipientsInput
+            onSubmit={handleSubmitEmails}
+            isDisabled={isDisabled}
+          />
           <FormErrorMessage>{get(errors, 'emails.message')}</FormErrorMessage>
           {isEmpty(errors) ? (
             <FormLabel.Description
               color="secondary.400"
               mt="0.5rem"
-              opacity={isDisabled ? '0.3' : '1'}
+              opacity="1"
             >
               {t(
                 'features.adminForm.settings.emailNotifications.section.regular.description',
@@ -162,13 +165,6 @@ export const FormEmailSection = ({
             </FormLabel.Description>
           ) : null}
         </FormControl>
-        {isTest || user?.betaFlags?.respondentCopy ? (
-          <FormControl isDisabled={isDisabled}>
-            <Box mt={'1.5rem'}>
-              <RespondentCopyToggle />
-            </Box>
-          </FormControl>
-        ) : null}
       </FormProvider>
     </>
   )

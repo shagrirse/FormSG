@@ -3,16 +3,17 @@ import { Control, useWatch } from 'react-hook-form'
 
 import {
   FormColorTheme,
-  FormWorkflowStepDto,
   LogicDto,
+  StrippedFormWorkflowStepDto,
 } from '~shared/types/form'
 
 import { FormFieldValues } from '~templates/Field'
 
 import { FormFieldWithQuestionNo } from '~features/form/types'
-import { augmentWithQuestionNo } from '~features/form/utils'
-import { isFieldEnabledByWorkflow } from '~features/form/utils/augmentWithWorkflowDisabling'
+import { augmentFieldWithQuestionNo } from '~features/form/utils'
+import { isFieldEnabledByMrfWorkflow } from '~features/form/utils/augmentFieldWithMrfWorkflowDisabling'
 import { getVisibleFieldIds } from '~features/logic/utils'
+import { isMyInfo } from '~features/myinfo/utils'
 import { usePublicFormContext } from '~features/public-form/PublicFormContext'
 
 import { FieldFactory } from './FieldFactory'
@@ -23,7 +24,7 @@ interface VisibleFormFieldsProps {
   control: Control<FormFieldValues>
   formFields: FormFieldWithQuestionNo[]
   formLogics: LogicDto[]
-  workflowStep?: FormWorkflowStepDto
+  workflowStep?: StrippedFormWorkflowStepDto
   colorTheme: FormColorTheme
   fieldPrefillMap: PrefillMap
 }
@@ -54,7 +55,8 @@ export const VisibleFormFields = ({
     const visibleFields = formFields.filter((field) =>
       visibleFieldIds.has(field._id),
     )
-    const visibleFieldsWithQuestionNo = augmentWithQuestionNo(visibleFields)
+    const visibleFieldsWithQuestionNo =
+      augmentFieldWithQuestionNo(visibleFields)
     setVisibleFormFields(visibleFieldsWithQuestionNo)
 
     // set the number of visible fields in the context for public forms
@@ -76,9 +78,11 @@ export const VisibleFormFields = ({
           colorTheme={colorTheme}
           field={field}
           disableRequiredValidation={
-            !isFieldEnabledByWorkflow(workflowStep, field)
+            !isFieldEnabledByMrfWorkflow(workflowStep, field)
           }
-          isHighContrast={!isFieldEnabledByWorkflow(workflowStep, field)}
+          isHighContrast={
+            !isFieldEnabledByMrfWorkflow(workflowStep, field) || isMyInfo(field)
+          }
           key={field._id}
           prefill={fieldPrefillMap[field._id]}
         />

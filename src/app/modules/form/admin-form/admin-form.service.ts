@@ -29,7 +29,6 @@ import {
   EndPageUpdateDto,
   FieldCreateDto,
   FieldUpdateDto,
-  FormAuthType,
   FormFieldDto,
   FormLogoState,
   FormMetadata,
@@ -657,24 +656,34 @@ export const processCreateFormInWorkspace = async (
   return form
 }
 
+type DuplicateFormOpts = {
+  // The ID of the workspace to duplicate the form into.
+  workspaceId?: string
+  // If defined, overrides the emails of MRF workflows and dropdown fields with the given overrideEmails
+  overrideEmails?: string[]
+  // If duplicated from a use-template
+  isFromTemplate?: boolean
+}
+
 /**
  * Duplicates given formId and replace owner with newAdminId.
  * @param originalForm the form to be duplicated
  * @param newAdminId the id of the admin of the duplicated form
  * @param overrideParams params to override in the duplicated form; e.g. the new emails or public key of the form.
- * @param workspaceId the id of the workspace to duplicate the form into
+ * @param opts - Optional configuration for duplication.
  * @returns the newly created duplicated form
  */
 export const duplicateForm = (
   originalForm: IFormDocument,
   newAdminId: string,
   overrideParams: DuplicateFormOverwriteDto,
-  workspaceId?: string,
+  opts?: DuplicateFormOpts,
 ): ResultAsync<IFormDocument, FormNotFoundError | DatabaseError> => {
   const overrideProps = processDuplicateOverrideProps(
     overrideParams,
     newAdminId,
   )
+  const { workspaceId, overrideEmails, isFromTemplate } = opts ?? {}
 
   // Set startPage.logo to default irregardless.
   overrideProps.startPage = {
@@ -688,6 +697,37 @@ export const duplicateForm = (
   }
 
   const duplicateParams = originalForm.getDuplicateParams(overrideProps)
+
+  if (overrideEmails) {
+    // override emails for static workflow steps
+    duplicateParams.workflow?.forEach((step) => {
+      if (step.workflow_type === WorkflowType.Static) {
+        step.emails = overrideEmails
+      }
+    })
+
+    // remove conditional routing mapping from dropdown fields
+    duplicateParams.form_fields?.forEach((field) => {
+      if (field.fieldType === BasicField.Dropdown) {
+        field.optionsToRecipientsMap = Object.keys(
+          field.optionsToRecipientsMap ?? {},
+        ).reduce(
+          (acc, curr) => {
+            acc[curr] = overrideEmails
+            return acc
+          },
+          {} as Record<string, string[]>,
+        )
+      }
+    })
+  }
+
+  // if created from template, track original form id in metadata
+  if (isFromTemplate) {
+    duplicateParams.metadata = {
+      template_form_id: originalForm._id,
+    }
+  }
 
   if (workspaceId)
     return ResultAsync.fromPromise(
@@ -1834,7 +1874,6 @@ export const deleteFormWorkflowStep = (
  * @param body the subset of form settings to update
  * @returns ok(updated form settings) on success
  * @returns err(MalformedParametersError) if auth type update is attempted for a multi-respondent form
- * @returns err(MalformedParametersError) if webhook update is attempted for a multi-respondent form
  * @returns err(database errors) if db error is thrown during form setting update
  */
 export const updateFormSettings = (
@@ -1849,23 +1888,6 @@ export const updateFormSettings = (
   | DatabaseConflictError
   | DatabasePayloadSizeError
 > => {
-  if (
-    originalForm.responseMode === FormResponseMode.Multirespondent &&
-    !!body.authType &&
-    body.authType !== FormAuthType.NIL
-  ) {
-    return errAsync(new MalformedParametersError('Invalid authentication type'))
-  }
-
-  if (
-    originalForm.responseMode === FormResponseMode.Multirespondent &&
-    Boolean(body.webhook?.url)
-  ) {
-    return errAsync(
-      new MalformedParametersError('Webhooks not supported on MRF'),
-    )
-  }
-
   if (isFormEmailMode(originalForm)) {
     if (
       originalForm.isForceConvertToStorageMode &&

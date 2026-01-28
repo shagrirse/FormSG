@@ -50,6 +50,7 @@ import {
   RadioField,
   RatingField,
   ShortTextField,
+  SignatureField,
   TableField,
   UenField,
   YesNoField,
@@ -163,6 +164,13 @@ const FieldRowContainer = ({
     if (field.fieldType === BasicField.Table) {
       return {
         [field._id]: times(field.minimumRows || 0, () => createTableRow(field)),
+      }
+    }
+
+    if (field.fieldType === BasicField.Signature) {
+      const defaultType = 'draw'
+      return {
+        [field._id]: { type: defaultType, value: [] },
       }
     }
 
@@ -551,5 +559,7 @@ const FieldRow = ({ field, ...rest }: FieldRowProps) => {
       return <ChildrenCompoundField schema={field} {...rest} />
     case BasicField.Address:
       return <AddressCompoundField schema={field} {...rest} />
+    case BasicField.Signature:
+      return <SignatureField schema={field} {...rest} />
   }
 }

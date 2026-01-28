@@ -1,5 +1,6 @@
 import { generateDefaultField } from '__tests__/unit/backend/helpers/generate-form-data'
 import { ObjectId } from 'bson'
+import { omit } from 'lodash'
 import moment from 'moment-timezone'
 import { ok } from 'neverthrow'
 import { CLIENT_CHECKBOX_OTHERS_INPUT_VALUE } from 'shared/constants/form'
@@ -13,16 +14,20 @@ import {
   EmailResponseV3,
   FieldResponsesV3,
   FormFieldDto,
+  FormWorkflowStepConditional,
   FormWorkflowStepDto,
   LongTextResponseV3,
   NumberResponseV3,
   ShortTextResponseV3,
+  SignatureFieldResponseV3,
+  SignatureVectorArray,
   SubmissionType,
   TableResponseV3,
   WorkflowStatus,
   WorkflowType,
 } from 'shared/types'
 
+import { convertToSignaturePngDataUri } from 'src/app/utils/convert-vector-array-to-png'
 import {
   FormFieldSchema,
   IAddressCompoundFieldSchema,
@@ -32,6 +37,7 @@ import {
   INumberFieldSchema,
   IPopulatedForm,
   IShortTextFieldSchema,
+  ISignatureFieldSchema,
   ITableFieldSchema,
   MultirespondentSubmissionData,
 } from 'src/types'
@@ -40,7 +46,9 @@ import * as fieldValidation from '../../../../utils/field-validation'
 import { ValidateFieldErrorV3 } from '../../submission.errors'
 import {
   createMultirespondentSubmissionDto,
-  getQuestionTitleAnswerString,
+  createPublicMultirespondentSubmissionDto,
+  extractRespondentCopyEmailDatas,
+  getQuestionAnswerPairsForMultipleFields,
   retrieveWorkflowStepEmailAddresses,
   validateMrfFieldResponses,
 } from '../multirespondent-submission.utils'
@@ -52,6 +60,239 @@ describe('multirespondent-submission.utils', () => {
     emails: ['example@example.com'],
     edit: [],
   }
+
+  describe('extractRespondentCopyEmailDatas', () => {
+    it('should return email data for only current step email fields with auto reply enabled and has answer', () => {
+      // Arrange
+      const inactiveEmailField = new ObjectId().toHexString()
+      const activeEmailField = new ObjectId().toHexString()
+      const activeEmailFieldNoAnswer = new ObjectId().toHexString()
+      const activeEmailFieldNoAutoReply = new ObjectId().toHexString()
+      const shortTextFieldId = new ObjectId().toHexString()
+      const autoReplyOptionDefaults = {
+        autoReplySubject: 'Test Subject',
+        autoReplySender: 'Test Sender',
+        autoReplyMessage: 'Test Body',
+        includeFormSummary: true,
+        hasAutoReply: true,
+      }
+      const formFields = [
+        generateDefaultField(BasicField.Email, {
+          _id: inactiveEmailField,
+          autoReplyOptions: autoReplyOptionDefaults,
+        }),
+        generateDefaultField(BasicField.Email, {
+          _id: activeEmailField,
+          autoReplyOptions: autoReplyOptionDefaults,
+        }),
+        generateDefaultField(BasicField.Email, {
+          _id: activeEmailFieldNoAnswer,
+          autoReplyOptions: autoReplyOptionDefaults,
+        }),
+        generateDefaultField(BasicField.ShortText, {
+          _id: shortTextFieldId,
+          autoReplyOptions: autoReplyOptionDefaults,
+        }),
+        generateDefaultField(BasicField.Email, {
+          _id: activeEmailFieldNoAutoReply,
+          autoReplyOptions: {
+            ...autoReplyOptionDefaults,
+            hasAutoReply: false,
+          },
+        }),
+      ]
+
+      // Act
+      const result = extractRespondentCopyEmailDatas({
+        responses: {
+          [inactiveEmailField]: {
+            fieldType: BasicField.Email,
+            answer: {
+              value: 'notexpectedsinceinactive@email.com',
+            },
+          },
+          [activeEmailField]: {
+            fieldType: BasicField.Email,
+            answer: {
+              value: 'expected@email.com',
+            },
+          },
+          [shortTextFieldId]: {
+            fieldType: BasicField.ShortText,
+            answer: 'short text answer',
+          },
+          [activeEmailFieldNoAutoReply]: {
+            fieldType: BasicField.Email,
+            answer: { value: 'notexpectedsincenoautoReply@email.com' },
+          },
+        },
+        formFields,
+        currentStepActiveFields: [
+          activeEmailField,
+          shortTextFieldId,
+          activeEmailFieldNoAnswer,
+          activeEmailFieldNoAutoReply,
+        ],
+      })
+
+      // Assert
+      expect(result).toEqual([
+        {
+          email: 'expected@email.com',
+          subject: 'Test Subject',
+          sender: 'Test Sender',
+          body: 'Test Body',
+          includeFormSummary: true,
+        },
+      ])
+    })
+  })
+
+  describe('createPublicMultirespondentSubmissionDto', () => {
+    const getAllTypesFormFieldsWithDropdownOptionsToRecipientsMap = () => {
+      return Object.values(BasicField).map((fieldType) => {
+        if (fieldType === BasicField.Dropdown) {
+          return generateDefaultField(BasicField.Dropdown, {
+            optionsToRecipientsMap: {
+              'Option 1': ['recipient1@example.com', 'recipient2@example.com'],
+              'Option 2': ['recipient3@example.com'],
+            },
+          })
+        }
+        return generateDefaultField(fieldType)
+      })
+    }
+
+    it('should create a public multirespondent submission DTO sucessfully with workflow and form fields stripped', () => {
+      // Arrange
+      const formFields =
+        getAllTypesFormFieldsWithDropdownOptionsToRecipientsMap()
+      const dropdownField = formFields.find(
+        (field) => field.fieldType === BasicField.Dropdown,
+      )
+      const emailField = formFields.find(
+        (field) => field.fieldType === BasicField.Email,
+      )
+      const yesNoField = formFields.find(
+        (field) => field.fieldType === BasicField.YesNo,
+      )
+      const shortTextField = formFields.find(
+        (field) => field.fieldType === BasicField.ShortText,
+      )
+      const workflow = [
+        {
+          _id: new ObjectId(),
+          workflow_type: WorkflowType.Static,
+          emails: [], // Step 1 does not have emails, since anyone with form link is the step
+          edit: [],
+        },
+        {
+          _id: new ObjectId(),
+          workflow_type: WorkflowType.Static,
+          emails: ['test@open.gov.sg', 'test2@open.gov.sg'],
+          edit: [emailField?.id],
+          step_name: 'Static step where emails should be stripped',
+        },
+        {
+          _id: new ObjectId(),
+          workflow_type: WorkflowType.Dynamic,
+          field: emailField?._id,
+          edit: [dropdownField?._id],
+        },
+        {
+          _id: new ObjectId(),
+          workflow_type: WorkflowType.Conditional,
+          conditional_field: dropdownField?._id,
+          edit: [yesNoField?._id, shortTextField?._id],
+          approval_field: yesNoField?._id,
+        } as FormWorkflowStepConditional,
+      ]
+      const submittedSteps = [
+        {
+          isApproval: false,
+          submittedAt: '2024-01-01T00:00:00.000Z',
+        },
+        {
+          isApproval: false,
+          submittedAt: '2024-01-02T00:00:00.000Z',
+        },
+      ]
+      const createdDate = new Date()
+      const submissionData = {
+        submissionType: SubmissionType.Multirespondent,
+        _id: new ObjectId(),
+        created: createdDate,
+        submissionPublicKey: 'some public key',
+        encryptedSubmissionSecretKey: 'some encrypted secret key',
+        encryptedContent: 'some encrypted content',
+        workflow,
+        workflowStep: 1,
+        form_fields: formFields,
+        form_logics: [],
+        attachmentMetadata: {},
+        version: 3,
+        mrfVersion: 3,
+        submittedSteps,
+      } as unknown as MultirespondentSubmissionData
+      const attachmentPresignedUrls = {
+        someSubmissionId: 'some presigned url',
+      }
+
+      // Act
+      const actual = createPublicMultirespondentSubmissionDto(
+        submissionData,
+        attachmentPresignedUrls,
+      )
+
+      // Assert
+      expect(actual).toEqual({
+        refNo: submissionData._id,
+        submissionTime: moment(submissionData.created)
+          .tz('Asia/Singapore')
+          .format('ddd, D MMM YYYY, hh:mm:ss A'),
+        submissionPublicKey: submissionData.submissionPublicKey,
+        encryptedContent: submissionData.encryptedContent,
+        encryptedSubmissionSecretKey:
+          submissionData.encryptedSubmissionSecretKey,
+        attachmentMetadata: attachmentPresignedUrls,
+        submissionType: SubmissionType.Multirespondent,
+        workflow: submissionData.workflow.map((step) =>
+          step.workflow_type === WorkflowType.Static
+            ? omit(step, 'emails')
+            : step,
+        ),
+        form_fields: submissionData.form_fields.map((field) =>
+          field.fieldType === BasicField.Dropdown
+            ? omit(field, 'optionsToRecipientsMap')
+            : field,
+        ),
+        form_logics: submissionData.form_logics,
+        version: submissionData.version,
+        workflowStep: submissionData.workflowStep,
+        mrfVersion: submissionData.mrfVersion,
+        mrfMeta: {
+          workflowCurrentStepNumber: submittedSteps.length,
+          workflowNumTotalSteps: 4,
+          workflowStatus: WorkflowStatus.PENDING,
+          lastSubmittedAt:
+            submittedSteps[submittedSteps.length - 1].submittedAt,
+          hasNextStepRecipientEmails: false,
+        },
+      })
+
+      const dropdownFf = actual.form_fields.find(
+        (field) => field.fieldType === BasicField.Dropdown,
+      )
+      expect(dropdownFf).toBeDefined()
+      expect(dropdownFf).not.toContainKey('optionsToRecipientsMap')
+
+      const staticWorkflowStep = actual.workflow.find(
+        (step) => step.workflow_type === WorkflowType.Static,
+      )
+      expect(staticWorkflowStep).toBeDefined()
+      expect(staticWorkflowStep).not.toContainKey('emails')
+    })
+  })
 
   describe('createMultirespondentSubmissionDto', () => {
     it('should create an encrypted submission DTO sucessfully', () => {
@@ -279,12 +520,23 @@ describe('multirespondent-submission.utils', () => {
         } as EmailResponseV3,
       }
 
-      const result = getQuestionTitleAnswerString({ formFields, responses })
+      const result = getQuestionAnswerPairsForMultipleFields({
+        formFields,
+        responses,
+      })
 
       expect(result).toEqual([
-        { question: 'Short Text', answer: 'Test answer' },
-        { question: 'Number', answer: '42' },
-        { question: 'Email', answer: 'test@example.com' },
+        {
+          question: 'Short Text',
+          answer: 'Test answer',
+          fieldType: BasicField.ShortText,
+        },
+        { question: 'Number', answer: '42', fieldType: BasicField.Number },
+        {
+          question: 'Email',
+          answer: 'test@example.com',
+          fieldType: BasicField.Email,
+        },
       ])
     })
 
@@ -303,10 +555,17 @@ describe('multirespondent-submission.utils', () => {
         } as AttachmentResponseV3,
       }
 
-      const result = getQuestionTitleAnswerString({ formFields, responses })
+      const result = getQuestionAnswerPairsForMultipleFields({
+        formFields,
+        responses,
+      })
 
       expect(result).toEqual([
-        { question: '[Attachment] File Upload', answer: 'file.pdf' },
+        {
+          question: '[Attachment] File Upload',
+          answer: 'file.pdf',
+          fieldType: BasicField.Attachment,
+        },
       ])
     })
 
@@ -348,24 +607,31 @@ describe('multirespondent-submission.utils', () => {
         } as TableResponseV3,
       }
 
-      const result = getQuestionTitleAnswerString({ formFields, responses })
+      const result = getQuestionAnswerPairsForMultipleFields({
+        formFields,
+        responses,
+      })
 
       expect(result).toEqual([
         {
           question: '[Table] Table of Name and Age (Name; Age)',
           answer: 'Alice; 30',
+          fieldType: BasicField.Table,
         },
         {
           question: '[Table] Table of Name and Age (Name; Age)',
           answer: 'Bob; 25',
+          fieldType: BasicField.Table,
         },
         {
           question: '[Table] Table of Hobbies (Hobby; Years)',
           answer: 'Swimming; 5',
+          fieldType: BasicField.Table,
         },
         {
           question: '[Table] Table of Hobbies (Hobby; Years)',
           answer: 'Reading; 10',
+          fieldType: BasicField.Table,
         },
       ])
     })
@@ -388,10 +654,17 @@ describe('multirespondent-submission.utils', () => {
         } as CheckboxResponseV3,
       }
 
-      const result = getQuestionTitleAnswerString({ formFields, responses })
+      const result = getQuestionAnswerPairsForMultipleFields({
+        formFields,
+        responses,
+      })
 
       expect(result).toEqual([
-        { question: 'Checkbox', answer: 'Option 1,Option 2,Custom Option' },
+        {
+          question: 'Checkbox',
+          answer: 'Option 1,Option 2,Custom Option',
+          fieldType: BasicField.Checkbox,
+        },
       ])
     })
 
@@ -419,12 +692,116 @@ describe('multirespondent-submission.utils', () => {
         } as AddressResponseV3,
       }
 
-      const result = getQuestionTitleAnswerString({ formFields, responses })
+      const result = getQuestionAnswerPairsForMultipleFields({
+        formFields,
+        responses,
+      })
 
       expect(result).toEqual([
         {
           question: 'Address',
           answer: '161, BUKIT BATOK STREET 11, #1-1, SINGAPORE 650161',
+          fieldType: BasicField.Address,
+        },
+      ])
+    })
+
+    it('should handle signature fields correctly when includeSignatureDataPngUri is true', () => {
+      const formFields: FormFieldSchema[] = [
+        {
+          _id: '1',
+          title: 'Signature',
+          fieldType: BasicField.Signature,
+        } as ISignatureFieldSchema,
+      ]
+
+      const MOCK_SIGNATURE_VALUE: SignatureVectorArray = [
+        [[10, 20, 0.5]],
+        [[40, 40, 0.5]],
+      ]
+
+      const responses: FieldResponsesV3 = {
+        '1': {
+          fieldType: BasicField.Signature,
+          answer: {
+            type: 'draw',
+            value: MOCK_SIGNATURE_VALUE,
+          } as SignatureFieldResponseV3,
+        },
+      }
+
+      const result = getQuestionAnswerPairsForMultipleFields({
+        formFields,
+        responses,
+        includeSignatureDataPngDataUri: true,
+      })
+
+      const expectedSignatureDataPngDataUri =
+        convertToSignaturePngDataUri(MOCK_SIGNATURE_VALUE)
+
+      expect(result).toEqual([
+        {
+          question: '[signature] Signature',
+          answer: 'Signature captured',
+          fieldType: BasicField.Signature,
+          signatureDataPngDataUri: expectedSignatureDataPngDataUri,
+        },
+      ])
+    })
+
+    it('should handle signature fields correctly when includeSignatureDataPngUri is false', () => {
+      const formFields: FormFieldSchema[] = [
+        {
+          _id: '1',
+          title: 'Signature',
+          fieldType: BasicField.Signature,
+        } as ISignatureFieldSchema,
+      ]
+
+      const responses: FieldResponsesV3 = {
+        '1': {
+          fieldType: BasicField.Signature,
+          answer: {
+            type: 'draw',
+            value: [[[10, 20, 0.5]], [[40, 40, 0.5]]],
+          } as SignatureFieldResponseV3,
+        },
+      }
+
+      const result = getQuestionAnswerPairsForMultipleFields({
+        formFields,
+        responses,
+      })
+
+      expect(result).toEqual([
+        {
+          question: '[signature] Signature',
+          answer: 'Signature captured',
+          fieldType: BasicField.Signature,
+          signatureDataPngDataUri: undefined,
+        },
+      ])
+    })
+
+    it('should handle Ndi fields correctly', () => {
+      const formFields: FormFieldSchema[] = []
+      const responses: FieldResponsesV3 = {
+        'SingPass Validated NRIC (Step 1)': {
+          fieldType: BasicField.Nric,
+          answer: 'S1234567A',
+        },
+      }
+
+      const result = getQuestionAnswerPairsForMultipleFields({
+        formFields,
+        responses,
+      })
+
+      expect(result).toEqual([
+        {
+          question: 'SingPass Validated NRIC (Step 1)',
+          answer: 'S1234567A',
+          fieldType: BasicField.Nric,
         },
       ])
     })
@@ -646,7 +1023,10 @@ describe('multirespondent-submission.utils', () => {
       } as ShortTextResponseV3,
     }
 
-    const result = getQuestionTitleAnswerString({ formFields, responses })
+    const result = getQuestionAnswerPairsForMultipleFields({
+      formFields,
+      responses,
+    })
 
     expect(result).toEqual([])
   })
@@ -660,13 +1040,13 @@ describe('multirespondent-submission.utils', () => {
       } as IShortTextFieldSchema,
     ]
 
-    const undefinedResult = getQuestionTitleAnswerString({
+    const undefinedResult = getQuestionAnswerPairsForMultipleFields({
       formFields,
       responses: undefined as unknown as FieldResponsesV3,
     })
     expect(undefinedResult).toEqual([])
 
-    const nullResult = getQuestionTitleAnswerString({
+    const nullResult = getQuestionAnswerPairsForMultipleFields({
       formFields,
       responses: null as unknown as FieldResponsesV3,
     })

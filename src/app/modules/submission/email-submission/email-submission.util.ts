@@ -7,6 +7,10 @@ import {
   handleAddressResponseDisplay,
 } from '../../../../../shared/utils/address'
 import {
+  convertToSignatureVectorArray,
+  SIGNATURE_CAPTURED_STRING,
+} from '../../../../../shared/utils/signature'
+import {
   EmailAdminDataField,
   EmailDataCollationToolField,
   EmailDataFields,
@@ -31,10 +35,12 @@ import {
   TurnstileConnectionError,
   VerifyTurnstileError,
 } from '../../../services/turnstile/turnstile.errors'
+import { convertToSignaturePngDataUri } from '../../../utils/convert-vector-array-to-png'
 import {
   isProcessedAddressResponse,
   isProcessedCheckboxResponse,
   isProcessedChildResponse,
+  isProcessedSignatureResponse,
   isProcessedTableResponse,
 } from '../../../utils/field-validation/field-validation.guards'
 import {
@@ -81,12 +87,14 @@ import {
   ProcessedAddressResponse,
   ProcessedCheckboxResponse,
   ProcessedFieldResponse,
+  ProcessedSignatureResponse,
   ProcessedTableResponse,
 } from '../submission.types'
 import { getAnswersForChild, getMyInfoPrefix } from '../submission.utils'
 
 import {
   ATTACHMENT_PREFIX,
+  SIGNATURE_PREFIX,
   TABLE_PREFIX,
   VERIFIED_PREFIX,
 } from './email-submission.constants'
@@ -120,6 +128,8 @@ const getFieldTypePrefix = (response: ResponseFormattedForEmail): string => {
       return TABLE_PREFIX
     case BasicField.Attachment:
       return ATTACHMENT_PREFIX
+    case BasicField.Signature:
+      return SIGNATURE_PREFIX
     default:
       return ''
   }
@@ -215,6 +225,39 @@ export const getAnswerForAddress = (
 }
 
 /**
+ * Creates a response for signature with its answer formatted from the answerArray
+ */
+export const getAnswerForSignature = (
+  response: ProcessedSignatureResponse,
+): ResponseFormattedForEmail => {
+  let signatureAnswer: string
+
+  switch (response.answerArray[0]) {
+    case 'draw':
+      if (response.answerArray[1].length > 0) {
+        signatureAnswer = convertToSignaturePngDataUri(
+          convertToSignatureVectorArray(response.answerArray[1]),
+        )
+      } else {
+        signatureAnswer = ''
+      }
+      break
+    default:
+      signatureAnswer = ''
+  }
+  return {
+    _id: response._id,
+    fieldType: response.fieldType,
+    question: response.question,
+    myInfo: response.myInfo,
+    isVisible: response.isVisible,
+    isUserVerified: response.isUserVerified,
+    answer: signatureAnswer,
+    ...(signatureAnswer ? { answerTemplate: [SIGNATURE_CAPTURED_STRING] } : {}),
+  }
+}
+
+/**
  *  Formats the response for sending to the submitter (autoReplyData),
  *  the table that is sent to the admin (formData),
  *  and the json used by data collation tool (dataCollationData).
@@ -237,6 +280,7 @@ export const getFormattedResponse = (
     autoReplyData = {
       question, // No prefixes for autoreply
       answerTemplate: answerSplitByNewLine,
+      fieldType,
     }
   }
 
@@ -468,6 +512,9 @@ const createFormattedDataForOneField = <T extends EmailDataFields | undefined>(
   } else if (isProcessedAddressResponse(response)) {
     const address = getAnswerForAddress(response)
     return [getFormattedFunction(address, hashedFields)]
+  } else if (isProcessedSignatureResponse(response)) {
+    const signature = getAnswerForSignature(response)
+    return [getFormattedFunction(signature, hashedFields)]
   } else {
     return [getFormattedFunction(response, hashedFields)]
   }
@@ -514,6 +561,7 @@ const maskUidOnLastField = (
         return {
           question: autoReplyField.question,
           answerTemplate: maskedAnswerTemplate,
+          fieldType: autoReplyField.fieldType,
         }
       } else {
         return autoReplyField
@@ -530,6 +578,13 @@ const getDataCollationFormattedResponse = (
   response: ResponseFormattedForEmail,
 ): EmailDataCollationToolField | undefined => {
   const { answer, fieldType } = response
+
+  if (fieldType === BasicField.Signature) {
+    return {
+      question: getJsonPrefixedQuestion(response),
+      answer: response.answerTemplate ? response.answerTemplate[0] : '',
+    }
+  }
   // Headers are excluded from JSON data
   if (fieldType !== BasicField.Section) {
     return {
@@ -550,6 +605,16 @@ const getFormFormattedResponse = (
 ): EmailAdminDataField => {
   const { answer, fieldType } = response
   const answerSplitByNewLine = answer.split('\n')
+
+  if (fieldType === BasicField.Signature) {
+    return {
+      question: getFormDataPrefixedQuestion(response, hashedFields),
+      answerTemplate: response.answerTemplate ?? [],
+      answer,
+      fieldType,
+    }
+  }
+
   return {
     question: getFormDataPrefixedQuestion(response, hashedFields),
     answerTemplate: answerSplitByNewLine,
@@ -565,13 +630,17 @@ const getFormFormattedResponse = (
 const getAutoReplyFormattedResponse = (
   response: ResponseFormattedForEmail,
 ): EmailRespondentConfirmationField | undefined => {
-  const { question, answer, isVisible } = response
-  const answerSplitByNewLine = answer.split('\n')
+  const { question, answer, isVisible, answerTemplate } = response
+  const answerSplitByNewLine = answerTemplate ?? answer.split('\n')
   // Auto reply email will contain only visible fields
   if (isVisible !== false) {
     return {
       question, // No prefixes for autoreply
       answerTemplate: answerSplitByNewLine,
+      ...(response.fieldType === BasicField.Signature && {
+        answer: response.answer,
+      }), // add signature answer for PDF generation
+      fieldType: response.fieldType,
     }
   }
   return undefined
@@ -596,7 +665,7 @@ export class SubmissionEmailObj {
    * Getter function to return dataCollationData which is used for data collation tool
    */
   get dataCollationData(): EmailDataCollationToolField[] {
-    const splitAddressData = splitAddressResponse(this.parsedResponses)
+    const splitAddressData = formatDataCollationResponse(this.parsedResponses)
     const dataCollationFormattedData = splitAddressData.flatMap((response) =>
       createFormattedDataForOneField(
         response,
@@ -645,7 +714,9 @@ export class SubmissionEmailObj {
   }
 }
 
-const splitAddressResponse = (parsedResponses: ProcessedFieldResponse[]) => {
+const formatDataCollationResponse = (
+  parsedResponses: ProcessedFieldResponse[],
+) => {
   const responses: ProcessedFieldResponse[] = []
   for (const i in parsedResponses) {
     const response = parsedResponses[i]

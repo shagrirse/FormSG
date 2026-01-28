@@ -4,9 +4,8 @@ import { errAsync, okAsync } from 'neverthrow'
 
 import {
   ErrorDto,
-  FormAuthType,
   FormResponseMode,
-  MultirespondentSubmissionDto,
+  PublicMultirespondentSubmissionDto,
   SubmissionType,
 } from '../../../../../shared/types'
 import { getMultirespondentSubmissionEditPath } from '../../../../../shared/utils/urls'
@@ -18,7 +17,6 @@ import * as TurnstileMiddleware from '../../../services/turnstile/turnstile.midd
 import { Pipeline } from '../../../utils/pipeline-middleware'
 import { createReqMeta } from '../../../utils/request'
 import * as AuthService from '../../auth/auth.service'
-import { MalformedParametersError } from '../../core/core.errors'
 import { ControllerHandler } from '../../core/core.types'
 import { setFormTags } from '../../datadog/datadog.utils'
 import { updateFormMetadata } from '../../form/admin-form/admin-form.service'
@@ -60,7 +58,7 @@ import {
   UpdateMultirespondentSubmissionHandlerRequest,
   UpdateMultirespondentSubmissionHandlerType,
 } from './multirespondent-submission.types'
-import { createMultirespondentSubmissionDto } from './multirespondent-submission.utils'
+import { createPublicMultirespondentSubmissionDto } from './multirespondent-submission.utils'
 
 const logger = createLoggerWithLabel(module)
 
@@ -108,20 +106,6 @@ const submitMultirespondentForm = async (
     return // required to stop submission processing
   }
 
-  // Disallow form authentication for multirespondent forms
-  if (form.authType !== FormAuthType.NIL) {
-    logger.error({
-      message: 'Multirespondent form is not allowed to have authorization',
-      meta: logMeta,
-    })
-    const { errorMessage, statusCode } = mapRouteError(
-      new MalformedParametersError(
-        'Multirespondent form is not allowed to have authType',
-      ),
-    )
-    return res.status(statusCode).json({ message: errorMessage })
-  }
-
   const encryptedPayload = req.formsg.encryptedPayload
 
   const createMultiRespondentFormSubmissionResult =
@@ -149,12 +133,13 @@ const submitMultirespondentForm = async (
   })
 
   await performMultiRespondentPostSubmissionCreateActions({
+    submission,
     submissionId: submission._id.toString(),
     form,
     encryptedPayload,
     logMeta,
     attachments: req.formsg.unencryptedAttachments,
-    respondentEmails: req.formsg.respondentEmails,
+    growthbook: req.growthbook,
   })
 }
 
@@ -172,9 +157,16 @@ const updateMultirespondentSubmission = async (
     formId,
   }
 
-  const form = req.formsg.formDef
+  const { formDef: currentForm, snapshottedFormDef } = req.formsg
 
-  setFormTags(form)
+  if (!snapshottedFormDef) {
+    const { errorMessage, statusCode } = mapRouteError(
+      new SubmissionFailedError(),
+    )
+    return res.status(statusCode).json({ message: errorMessage })
+  }
+
+  setFormTags(currentForm)
 
   const ensurePipeline = new Pipeline(
     ensurePublicForm,
@@ -183,7 +175,7 @@ const updateMultirespondentSubmission = async (
   )
 
   const hasEnsuredAll = await ensurePipeline.execute({
-    form,
+    form: currentForm,
     logMeta,
     req,
     res,
@@ -204,7 +196,7 @@ const updateMultirespondentSubmission = async (
   const updateMultiRespondentFormSubmissionResult =
     await updateMultiRespondentFormSubmission({
       submissionId,
-      form,
+      snapshottedFormDef,
       encryptedPayload,
       logMeta,
     })
@@ -236,13 +228,14 @@ const updateMultirespondentSubmission = async (
   const currentStepNumber = submission.workflowStep
 
   await performMultiRespondentPostSubmissionUpdateActions({
+    submission,
     submissionId,
-    form,
+    snapshottedFormDef,
     currentStepNumber,
     encryptedPayload,
     logMeta,
     attachments: req.formsg.unencryptedAttachments,
-    respondentEmails: req.formsg.respondentEmails,
+    growthbook: req.growthbook,
   })
 }
 
@@ -258,6 +251,7 @@ export const handleMultirespondentSubmission = [
   MultirespondentSubmissionMiddleware.scanAndRetrieveAttachments,
   MultirespondentSubmissionMiddleware.validateMultirespondentSubmission,
   MultirespondentSubmissionMiddleware.encryptSubmission,
+  MultirespondentSubmissionMiddleware.handleNdiResponses,
   submitMultirespondentForm,
 ] as ControllerHandler[]
 
@@ -271,13 +265,14 @@ export const handleUpdateMultirespondentSubmission = [
   MultirespondentSubmissionMiddleware.validateMultirespondentSubmission,
   MultirespondentSubmissionMiddleware.setCurrentWorkflowStep,
   MultirespondentSubmissionMiddleware.encryptSubmission,
+  MultirespondentSubmissionMiddleware.handleNdiResponses,
   updateMultirespondentSubmission,
 ] as ControllerHandler[]
 
 /**
  * Handler for GET /forms/:formId/submissions/:submissionId
  * @returns 200 with encrypted submission data response
- * @returns 400 when form is not an encrypt mode form
+ * @returns 400 when form is not an multirespondent mode form
  * @returns 404 when submissionId cannot be found in the database
  * @returns 404 when form cannot be found
  * @returns 410 when form is archived
@@ -285,7 +280,7 @@ export const handleUpdateMultirespondentSubmission = [
  */
 export const handleGetMultirespondentSubmissionForRespondent: ControllerHandler<
   { formId: string; submissionId: string },
-  MultirespondentSubmissionDto | ErrorDto
+  PublicMultirespondentSubmissionDto | ErrorDto
 > = async (req, res) => {
   const { formId, submissionId } = req.params
 
@@ -324,7 +319,10 @@ export const handleGetMultirespondentSubmissionForRespondent: ControllerHandler<
           submissionData.attachmentMetadata,
           urlExpiry,
         ).map((presignedUrls) =>
-          createMultirespondentSubmissionDto(submissionData, presignedUrls),
+          createPublicMultirespondentSubmissionDto(
+            submissionData,
+            presignedUrls,
+          ),
         )
       })
       .map((responseData) => {

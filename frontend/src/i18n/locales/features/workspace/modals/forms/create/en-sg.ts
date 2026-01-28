@@ -14,6 +14,8 @@ export const enSG: CreateFormModal = {
       'useCreateFormWizard must be used within a CreateFormWizardProvider component',
     noSingpassInMrf:
       'The form you are trying to duplicate has Singpass authentication which is not supported for Multi-respondent forms.',
+    noMyInfoChildrenInMrf:
+      'The form you are trying to duplicate has MyInfo Children field(s) which is not supported for Multi-respondent forms.',
   },
   details: {
     name: {
@@ -21,26 +23,26 @@ export const enSG: CreateFormModal = {
       message: 'It is advised to use a shorter, more succinct form name.',
     },
     type: {
-      label: 'What type of form do you need?',
+      label: 'Number of respondents',
+      description: 'How many respondents will fill up each form submission?',
       storage: {
-        title: 'Storage mode form',
+        title: 'One respondent',
         subtitle:
-          'Collect responses from individual respondents. Ideal for one-way submissions.',
+          'Forms with just one respondent per submission support the following:',
         optionDescriptionItems: {
-          supportEmailSubmissions: 'Supports email submissions',
-          supportSingpassMyinfo: 'Supports Singpass & Myinfo',
-          supportWebhooks: 'Supports webhooks for integrations',
+          supportSingpassMyinfo: 'Singpass & Myinfo',
+          supportWebhooks: 'Webhooks for integrations',
           sensitivity:
             'Up to Confidential (Cloud-Eligible) and Sensitive (High) data',
         },
       },
       mrf: {
-        title: 'Multi-respondent form',
+        title: 'Two or more respondents',
         subtitle:
-          'Collect responses from multiple respondents in a single workflow. Ideal for sequential submissions.',
+          'Forms with two or more respondents per submission support the following:',
         optionDescriptionItems: {
-          supportEmailSubmissions: 'Supports email submissions',
-          supportApprovalWorkflow: 'Supports approval workflows',
+          supportApprovalWorkflow: 'Approval workflows',
+          supportEmailRouting: 'Email routing',
           sensitivity:
             'Up to Confidential (Cloud-Eligible) and Sensitive (High) data',
         },
@@ -84,15 +86,15 @@ export const enSG: CreateFormModal = {
       subject: 'Shared Secret Key for {titleInputValue}',
       body: `
           Dear collaborator,
-  
+
           I am sharing my form's secret key with you for safekeeping and backup. This is an important key that is needed to access all form responses.
-  
+
           Form title: {titleInputValue}
-  
+
           Secret key: {secretKey}
-  
+
           All you need to do is keep this email as a record, and please do not share this key with anyone else.
-  
+
           Thank you for helping to safekeep my form!`,
     },
     warning: {
@@ -106,5 +108,29 @@ export const enSG: CreateFormModal = {
   },
   emailFormRecipient: {
     placeholder: 'Separate emails with a comma',
+  },
+  emailModeFeedback: {
+    header: 'Before you get started',
+    description:
+      "We'd love to understand why you chose to create an Email mode form. This will help us ensure a smooth transition once we phase out Email mode.",
+    question: {
+      title: 'Why are you creating an Email mode form?',
+      options: {
+        sensitiveHigh: 'I need to collect Sensitive High data',
+      },
+    },
+    next: 'Next: Set up your form',
+  },
+  emailModeCreation: {
+    header: 'Set up your form in Email mode',
+    formName: {
+      label: 'Form name',
+    },
+    notifications: {
+      label: 'Notifications for new responses',
+      description:
+        'All email addresses below will be notified. Learn more on [how to guard against email bounces]({GUIDE_PREVENT_EMAIL_BOUNCE}).',
+    },
+    create: 'Create form',
   },
 }

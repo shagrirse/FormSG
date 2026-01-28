@@ -239,10 +239,11 @@ export const performPaymentPostSubmissionActions = (
           .andThen((submission) => {
             if (isSubmissionEncryptMode(submission)) {
               return (
-                performEncryptPostSubmissionActions(
+                performEncryptPostSubmissionActions({
                   submission,
-                  payment.responses,
-                )
+                  responses: payment.responses,
+                  emailFields: [], // TODO [EMAIL-CONFIRMATION-BUG]: Email confirmation email to email fields does not work for payment forms, this is an existing issue to be fixed.
+                })
                   .andThen(() =>
                     // If successfully sent email confirmations, delete response data from payment document.
                     ResultAsync.fromPromise(

@@ -1,22 +1,29 @@
+import { GrowthBook } from '@growthbook/growthbook'
 import mongoose from 'mongoose'
 import { err, ok, okAsync, Result, ResultAsync } from 'neverthrow'
-
-import { AutoReplyMailData } from 'src/app/services/mail/mail.types'
+import Mail from 'nodemailer/lib/mailer'
 
 import {
   DateString,
   FormResponseMode,
+  PaymentChannel,
   SubmissionType,
 } from '../../../../../shared/types'
 import {
+  EmailAdminDataField,
   FieldResponse,
-  IAttachmentInfo,
+  FormFieldSchema,
   IEncryptedSubmissionSchema,
   IPopulatedEncryptedForm,
   IPopulatedForm,
 } from '../../../../types'
+import config, { isTest } from '../../../config/config'
 import { createLoggerWithLabel } from '../../../config/logger'
 import { getEncryptSubmissionModel } from '../../../models/submission.server.model'
+import { AutoreplyPdfGenerationError } from '../../../services/mail/mail.errors'
+import MailService from '../../../services/mail/mail.service'
+import { AutoReplyMailData } from '../../../services/mail/mail.types'
+import { generateAutoreplyPdf } from '../../../services/mail/mail.utils'
 import { createQueryWithDateParam } from '../../../utils/date'
 import { getMongoErrorMessage } from '../../../utils/handle-mongo-error'
 import { DatabaseError, PossibleDatabaseError } from '../../core/core.errors'
@@ -28,6 +35,8 @@ import {
   WebhookValidationError,
 } from '../../webhook/webhook.errors'
 import { WebhookFactory } from '../../webhook/webhook.factory'
+import { MYINFO_PREFIX } from '../email-submission/email-submission.constants'
+import * as EmailSubmissionService from '../email-submission/email-submission.service'
 import { SubmissionEmailObj } from '../email-submission/email-submission.util'
 import {
   ResponseModeError,
@@ -36,7 +45,11 @@ import {
   UnsupportedSettingsError,
 } from '../submission.errors'
 import { sendEmailConfirmations } from '../submission.service'
-import { extractEmailConfirmationData } from '../submission.utils'
+import { ProcessedFieldResponse } from '../submission.types'
+import {
+  extractEmailConfirmationData,
+  isAdminEmailPdfEnabled,
+} from '../submission.utils'
 
 import { CHARTS_MAX_SUBMISSION_RESULTS } from './encrypt-submission.constants'
 import { SaveEncryptSubmissionParams } from './encrypt-submission.types'
@@ -128,11 +141,100 @@ export const createEncryptSubmissionWithoutSave = ({
   })
 }
 
+const checkIfAdminPdfIsRequired = (
+  isPaymentEnabled: boolean,
+  formFields: FormFieldSchema[],
+  growthbook?: GrowthBook,
+): boolean => {
+  const isGbFlagEnabled =
+    isAdminEmailPdfEnabled({ growthbook, formFields }) || isTest
+
+  if (!isGbFlagEnabled) {
+    return false
+  }
+  return !isPaymentEnabled
+}
+
+const checkIfRespondentFormSummaryIsRequired = ({
+  autoReplyMailDatas,
+  isPaymentEnabled,
+}: {
+  autoReplyMailDatas: AutoReplyMailData[]
+  isPaymentEnabled: boolean
+}): boolean => {
+  return (
+    !isPaymentEnabled &&
+    autoReplyMailDatas.some((data) => data.includeFormSummary)
+  )
+}
+
+const generatePdfAttachmentIfRequired = ({
+  isPaymentEnabled,
+  autoReplyMailDatas,
+  submission,
+  form,
+  responsesData,
+  growthbook,
+}: {
+  isPaymentEnabled: boolean
+  autoReplyMailDatas: AutoReplyMailData[]
+  submission: IEncryptedSubmissionSchema
+  form: IPopulatedEncryptedForm
+  responsesData: EmailAdminDataField[]
+  growthbook?: GrowthBook
+}): ResultAsync<Mail.Attachment | undefined, AutoreplyPdfGenerationError> => {
+  const isAdminPdfRequired = checkIfAdminPdfIsRequired(
+    isPaymentEnabled,
+    form.form_fields,
+    growthbook,
+  )
+  const isRespondentCopyPdfRequired = checkIfRespondentFormSummaryIsRequired({
+    isPaymentEnabled,
+    autoReplyMailDatas,
+  })
+  if (!isAdminPdfRequired && !isRespondentCopyPdfRequired) {
+    return okAsync(undefined)
+  }
+
+  const autoReplyData = {
+    refNo: submission.id,
+    formTitle: form.title,
+    submissionDateTime: submission.created ?? new Date(),
+    responsesData,
+    formUrl: `${config.app.appUrl}/${form._id}`,
+  }
+
+  const DEFAULT_RESPONSE_PDF_FILENAME = 'response.pdf'
+  return generateAutoreplyPdf(autoReplyData, true)
+    .map((pdfBuffer) => ({
+      filename: DEFAULT_RESPONSE_PDF_FILENAME,
+      content: Buffer.copyBytesFrom(pdfBuffer),
+    }))
+    .mapErr((error) => {
+      logger.error({
+        message:
+          'Failed to include required PDF attachment for email notifications',
+        meta: {
+          action: 'generatePdfAttachmentIfRequired',
+          submissionId: submission.id,
+          formId: form._id,
+          formResponseMode: form.responseMode,
+          isAdminPdfRequired,
+          isRespondentCopyPdfRequired,
+        },
+        error,
+      })
+      return error
+    })
+}
+
 /**
  * Performs the post-submission actions for encrypt submissions. This is to be
  * called when the submission is completed
  * @param submission the completed submission
  * @param responses the verified field responses sent with the original submission request
+ * @param emailFields fields and their responses that will be included in email notifications. May be undefined if the form is payment form.
+ * @param submissionAttachments files from attachment fields in the submission that will be included in email notifications.
  * @returns ok(true) if all actions were completed successfully
  * @returns err(FormNotFoundError) if the form or form admin does not exist
  * @returns err(ResponseModeError) if the form is not encrypt mode
@@ -142,13 +244,21 @@ export const createEncryptSubmissionWithoutSave = ({
  * @returns err(SendEmailConfirmationError) if any email failed to be sent
  * @returns err(PossibleDatabaseError) if error occurs whilst querying the database
  */
-export const performEncryptPostSubmissionActions = (
-  submission: IEncryptedSubmissionSchema,
-  responses: FieldResponse[],
-  emailData?: SubmissionEmailObj,
-  attachments?: IAttachmentInfo[],
-  respondentEmails?: string[],
-): ResultAsync<
+export const performEncryptPostSubmissionActions = ({
+  submission,
+  responses,
+  emailFields,
+  submissionAttachments,
+  respondentEmails,
+  growthbook,
+}: {
+  submission: IEncryptedSubmissionSchema
+  responses: FieldResponse[]
+  emailFields: ProcessedFieldResponse[]
+  submissionAttachments?: Mail.Attachment[]
+  respondentEmails?: string[]
+  growthbook?: GrowthBook
+}): ResultAsync<
   true,
   | FormNotFoundError
   | ResponseModeError
@@ -158,6 +268,11 @@ export const performEncryptPostSubmissionActions = (
   | SubmissionNotFoundError
   | PossibleDatabaseError
 > => {
+  const logMeta = {
+    action: 'performEncryptPostSubmissionActions',
+    submissionId: submission.id,
+  }
+
   return FormService.retrieveFullFormById(submission.form)
     .andThen(checkFormIsEncryptMode)
     .andThen((form) => {
@@ -183,24 +298,90 @@ export const performEncryptPostSubmissionActions = (
           })
         : []
 
-      return sendEmailConfirmations({
-        form,
+      const { formData, dataCollationData } = new SubmissionEmailObj(
+        emailFields,
+        new Set(), // the MyInfo prefixes are already inserted in middleware
+        form.authType,
+      )
+      // Since we insert the [MyInfo] prefix in `encrypt-submission.middleware.ts`:L434
+      // we want to remove it for the dataCollationData
+      const formattedDataCollationData = dataCollationData.map((item) => ({
+        question: item.question.startsWith(MYINFO_PREFIX)
+          ? item.question.slice(MYINFO_PREFIX.length)
+          : item.question,
+        answer: item.answer,
+      }))
+      const recipientEmailDatas = [
+        ...extractEmailConfirmationData(responses, form.form_fields),
+        ...respondentCopyEmailData,
+      ]
+
+      const isPaymentEnabled =
+        form.responseMode === FormResponseMode.Encrypt &&
+        form.payments_channel.channel !== PaymentChannel.Unconnected &&
+        form.payments_field.enabled === true
+
+      const pdfAttachmentResult = generatePdfAttachmentIfRequired({
+        isPaymentEnabled,
+        autoReplyMailDatas: recipientEmailDatas,
         submission,
-        attachments,
-        responsesData: emailData?.autoReplyData,
-        recipientData: [
-          ...extractEmailConfirmationData(responses, form.form_fields),
-          ...respondentCopyEmailData,
-        ],
-      }).mapErr((error) => {
-        logger.error({
-          message: 'Error while sending email confirmations',
-          meta: {
-            action: 'sendEmailAutoReplies',
-          },
-          error,
-        })
-        return error
+        form,
+        responsesData: formData,
+        growthbook,
+      }).orElse(() => okAsync(undefined))
+
+      return pdfAttachmentResult.andThen((pdfAttachment) => {
+        return ResultAsync.combine([
+          MailService.sendSubmissionToAdmin({
+            replyToEmails:
+              EmailSubmissionService.extractEmailAnswers(emailFields),
+            form,
+            submission: {
+              created: submission.created,
+              id: submission.id,
+            },
+            submissionAttachments,
+            formData,
+            dataCollationData: formattedDataCollationData,
+            pdfAttachment: checkIfAdminPdfIsRequired(
+              isPaymentEnabled,
+              form.form_fields,
+              growthbook,
+            )
+              ? pdfAttachment
+              : undefined,
+          }).mapErr((error) => {
+            logger.error({
+              message:
+                'Error while sending submission notification email to admin',
+              meta: logMeta,
+              error,
+            })
+            return error
+          }),
+          sendEmailConfirmations({
+            form,
+            submission,
+            submissionAttachments,
+            recipientData: recipientEmailDatas,
+            responsesData: formData,
+            pdfAttachment: checkIfRespondentFormSummaryIsRequired({
+              isPaymentEnabled,
+              autoReplyMailDatas: recipientEmailDatas,
+            })
+              ? pdfAttachment
+              : undefined,
+            isPaymentEnabled,
+          }).mapErr((error) => {
+            logger.error({
+              message: 'Error while sending email confirmations to respondents',
+              meta: logMeta,
+              error,
+            })
+            return error
+          }),
+        ])
       })
     })
+    .map(() => true)
 }

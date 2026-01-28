@@ -1,12 +1,13 @@
 # syntax=docker/dockerfile:1
 
-FROM node:hydrogen-alpine3.19 AS build
+FROM node:jod-alpine3.22 AS build
 
 # node-modules-builder stage installs/compiles the node_modules folder
 # Python version must be specified starting in alpine3.12
 RUN apk update && apk upgrade && \
     apk --no-cache add --virtual native-deps \
-    g++ gcc libgcc libstdc++ linux-headers autoconf automake make nasm python3 git curl && \
+    g++ gcc libgcc libstdc++ linux-headers autoconf automake make nasm python3 git curl \
+    build-base cairo-dev pango-dev giflib-dev libjpeg-turbo-dev librsvg-dev && \
     npm install --quiet node-gyp -g
 WORKDIR /build
 
@@ -51,7 +52,7 @@ RUN --mount=type=secret,id=dd_api_key \
 RUN npm prune --production --legacy-peer-deps
 
 # This stage builds the final container
-FROM node:hydrogen-alpine3.19
+FROM node:jod-alpine3.22
 LABEL maintainer=FormSG<formsg@data.gov.sg>
 WORKDIR /opt/formsg
 
@@ -73,14 +74,18 @@ RUN mv /opt/formsg/dist/backend/shared /opt/formsg/
 
 RUN apk add --no-cache \
     # Compatible chromium versions can be found here https://pkgs.alpinelinux.org/packages?name=chromium&branch=v3.19&repo=&arch=&maintainer=
-    chromium=124.0.6367.78-r0 \
+# Compatible chromium versions can be found here https://pkgs.alpinelinux.org/packages?name=chromium&branch=v3.22&repo=&arch=&maintainer=
+chromium=142.0.7444.59-r0 \
     nss \
     freetype \
     freetype-dev \
     harfbuzz \
     ca-certificates \
     ttf-freefont \
-    tini
+    tini \
+    cairo \
+    pango \
+    librsvg
 
 # Tell Puppeteer to skip installing Chrome. We'll be using the installed package.
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true

@@ -26,8 +26,6 @@ services:
       - IMAGE_S3_BUCKET=local-image-bucket
       - LOGO_S3_BUCKET=local-logo-bucket
       - STATIC_ASSETS_S3_BUCKET=local-static-assets-bucket
-      - VIRUS_SCANNER_QUARANTINE_S3_BUCKET=local-virus-scanner-quarantine-bucket
-      - VIRUS_SCANNER_CLEAN_S3_BUCKET=local-virus-scanner-clean-bucket
       - GUARDDUTY_QUARANTINE_S3_BUCKET=local-guardduty-quarantine-bucket
       - GUARDDUTY_CLEAN_S3_BUCKET=local-guardduty-clean-bucket
       - FORMSG_SDK_MODE=development
@@ -42,7 +40,10 @@ services:
       - SES_PORT=1025
       - SES_HOST=maildev
       - WEBHOOK_SQS_URL=http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/local-webhooks-sqs-main
-      - INTRANET_IP_LIST_PATH
+      - INTRANET_IP_LIST_PATH=./__tests__/setup/mock-intranet-ips.txt
+      - INTRANET_IP_LIST=127.0.0.1
+      - OGP_IP_LIST=127.0.0.1
+      - RBI_IP_LIST=127.0.0.1
       # This needs to be removed and replaced with a real tracking ID in a local .env file
       # in order to enable GA in a local environment
       # Test credentials from reCAPTCHA docs
@@ -124,6 +125,7 @@ services:
       # env vars for virus scanner
       - VIRUS_SCANNER_LAMBDA_FUNCTION_NAME=function
       - GUARDDUTY_LAMBDA_FUNCTION_NAME=function
+      - PDF_GENERATOR_LAMBDA_FUNCTION_NAME=pdf-gen-sparticuz-dev
       - WOGAA_SECRET_KEY
       - WOGAA_START_ENDPOINT
       - WOGAA_SUBMIT_ENDPOINT
@@ -136,6 +138,9 @@ services:
       - DOWNLOAD_FORM_WHITELIST_RATE_LIMIT
       - UPLOAD_FORM_WHITELIST_RATE_LIMIT
       - KILL_EMAIL_MODE_FEEDBACK_FORMID=67b2b52264eeaf439cfb4f28
+      - SSO_DISCOVERY_URL
+      - SSO_CLIENT_ID
+      - SSO_CLIENT_SECRET
 
   mockpass:
     build: https://github.com/opengovsg/mockpass.git#v4.3.1
@@ -150,7 +155,7 @@ services:
     network_mode: 'service:backend' # reuse backend service's network stack so that it can resolve localhost:5156 to mockpass:5156
 
   database:
-    image: 'bitnami/mongodb:4.4'
+    image: 'bitnamilegacy/mongodb:4.4'
     environment:
       - MONGODB_DATABASE=formsg
       - MONGODB_ADVERTISED_HOSTNAME=database
@@ -174,8 +179,7 @@ services:
       - ./.localstack/volume:/var/lib/localstack
       - /var/run/docker.sock:/var/run/docker.sock
     network_mode: 'service:backend' # reuse backend service's network stack so that it can resolve localhost:4566 to localstack:4566
-    logging:
-      driver: none
+    attach: false
 
   maildev:
     image: maildev/maildev

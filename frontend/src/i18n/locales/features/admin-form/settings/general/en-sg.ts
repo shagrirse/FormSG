@@ -19,7 +19,7 @@ export const enSG = {
     input: {
       label: 'Maximum number of responses allowed',
       description:
-        'Your form will automatically close once it reaches the set limit. Enable reCAPTCHA to prevent spam submissions from triggering this limit.',
+        'Your form will automatically close once it reaches the set limit.',
     },
     limitLessThanCurrent:
       'Submission limit must be greater than current submission count ({currentResponseCount})',
@@ -27,14 +27,23 @@ export const enSG = {
   customisation: {
     closedFormMessage: 'Set message for closed form',
   },
-  captcha: {
-    label: 'Enable reCAPTCHA',
+  saveDraft: {
+    label: 'Enable saving of draft responses',
     description:
-      'If you expect non-English-speaking respondents, they may have difficulty understanding the reCAPTCHA selection instructions.',
+      "Respondents can save what they've filled in and continue later on the same browser.",
+  },
+  captcha: {
+    label: 'Enable human verification (reCAPTCHA)',
+    description:
+      'Respondents may need to complete an image challenge to submit the form.',
   },
   issueNotifications: {
     label: 'Receive email notifications for issues reported by respondents',
     description:
       'You will receive a maximum of one email per form, per day if there are any issues reported.',
+  },
+  singpass: {
+    mrfFirstStep:
+      'Only the first step in a workflow will have Singpass authentication enabled.',
   },
 }

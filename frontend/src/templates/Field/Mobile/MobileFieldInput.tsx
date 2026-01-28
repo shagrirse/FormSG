@@ -1,11 +1,10 @@
-import { useMemo } from 'react'
 import {
   Controller,
   ControllerRenderProps,
   useFormContext,
 } from 'react-hook-form'
 
-import { createMobileValidationRules } from '~utils/fieldValidation'
+import { useMobileValidationRules } from '~utils/fieldValidation'
 import PhoneNumberInput, {
   PhoneNumberInputProps,
 } from '~components/PhoneNumberInput'
@@ -36,9 +35,9 @@ export const MobileFieldInput = ({
   phoneNumberInputProps = {},
   isHighContrast,
 }: MobileFieldInputProps): JSX.Element => {
-  const validationRules = useMemo(
-    () => createMobileValidationRules(schema, disableRequiredValidation),
-    [schema, disableRequiredValidation],
+  const validationRules = useMobileValidationRules(
+    schema,
+    disableRequiredValidation,
   )
 
   const { control } = useFormContext<VerifiableFieldInput>()

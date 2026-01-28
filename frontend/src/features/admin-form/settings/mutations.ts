@@ -10,7 +10,6 @@ import {
   FormSettings,
   FormStatus,
   FormSupportedLanguages,
-  MultirespondentFormSettings,
   StorageFormSettings,
 } from '~shared/types/form/form'
 import { PAYMENT_DELETE_DEFAULT } from '~shared/utils/payments'
@@ -37,6 +36,7 @@ import {
   updateFormEsrvcId,
   updateFormHasMultiLang,
   updateFormInactiveMessage,
+  updateFormIsSaveDraftEnabled,
   updateFormIssueNotification,
   updateFormLimit,
   updateFormRespondentCopy,
@@ -131,7 +131,7 @@ export const useMutateFormSettings = () => {
         const toastStatusPublicMessage =
           newData.responseMode === FormResponseMode.Encrypt
             ? `Your form is now open.\n\nStore your secret key in a safe place. If you lose your secret key, all your responses will be lost permanently.`
-            : `Your form is now open.\n\nIf you expect a large number of responses,  [AutoArchive your mailbox](${GUIDE_PREVENT_EMAIL_BOUNCE}) to avoid losing any of them.`
+            : 'Your form is now open.'
         const toastStatusClosedMessage = 'Your form is closed to new responses.'
         const toastStatusMessage = isNowPublic
           ? toastStatusPublicMessage
@@ -202,6 +202,22 @@ export const useMutateFormSettings = () => {
             toastDescription: isSelectedLanguageSupported,
           })
         }
+      },
+      onError: handleError,
+    },
+  )
+
+  const mutateFormIsSaveDraftEnabled = useMutation(
+    (nextIsSaveDraftEnabled: boolean) =>
+      updateFormIsSaveDraftEnabled(formId, nextIsSaveDraftEnabled),
+    {
+      onSuccess: (newData) => {
+        handleSuccess({
+          newData,
+          toastDescription: `Saving of draft responses is now ${
+            newData.isSaveDraftEnabled ? 'enabled' : 'disabled'
+          } on your form.`,
+        })
       },
       onError: handleError,
     },
@@ -545,6 +561,7 @@ export const useMutateFormSettings = () => {
     mutateFormHasMultiLang,
     mutateFormSupportedLanguages,
     mutateFormInactiveMessage,
+    mutateFormIsSaveDraftEnabled,
     mutateFormCaptcha,
     mutateFormIssueNotification,
     mutateFormEmails,

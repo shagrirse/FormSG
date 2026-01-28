@@ -1,5 +1,9 @@
-import { MemoryRouter, Route } from 'react-router'
-import { Routes } from 'react-router-dom'
+import { Route } from 'react-router'
+import {
+  createMemoryRouter,
+  createRoutesFromElements,
+  RouterProvider,
+} from 'react-router-dom'
 import { Meta, StoryFn } from '@storybook/react'
 import { expect, userEvent, waitFor, within } from '@storybook/test'
 
@@ -35,12 +39,16 @@ export default {
     // Required so skeleton "animation" does not hide content.
     chromatic: { pauseAnimationAtEnd: true },
     layout: 'fullscreen',
-    msw: [
-      ...createFormBuilderMocks({}, 0),
-      getAdminFormSubmissions(),
-      getUser(),
-      getAdminFormCollaborators(),
-    ],
+    msw: {
+      handlers: {
+        default: [
+          ...createFormBuilderMocks({}, 0),
+          getAdminFormSubmissions(),
+          getUser(),
+          getAdminFormCollaborators(),
+        ],
+      },
+    },
   },
 } as Meta
 
@@ -51,56 +59,58 @@ const MOCK_KEYPAIR = {
 }
 
 const Template: StoryFn = () => {
-  return (
-    <MemoryRouter
-      initialEntries={[
-        `${ADMINFORM_ROUTE}/61540ece3d4a6e50ac0cc6ff/${ADMINFORM_RESULTS_SUBROUTE}`,
-      ]}
-    >
-      <Routes>
+  const router = createMemoryRouter(
+    createRoutesFromElements(
+      <Route path={`${ADMINFORM_ROUTE}/:formId`} element={<AdminFormLayout />}>
         <Route
-          path={`${ADMINFORM_ROUTE}/:formId`}
-          element={<AdminFormLayout />}
+          path={ADMINFORM_RESULTS_SUBROUTE}
+          element={<FormResultsLayout />}
         >
-          <Route
-            path={ADMINFORM_RESULTS_SUBROUTE}
-            element={<FormResultsLayout />}
-          >
-            <Route element={<ResponsesLayout />}>
-              <Route index element={<ResponsesPage />} />
-            </Route>
-            <Route
-              path={RESULTS_FEEDBACK_SUBROUTE}
-              element={<FeedbackPage />}
-            />
+          <Route element={<ResponsesLayout />}>
+            <Route index element={<ResponsesPage />} />
           </Route>
+          <Route path={RESULTS_FEEDBACK_SUBROUTE} element={<FeedbackPage />} />
         </Route>
-      </Routes>
-    </MemoryRouter>
+      </Route>,
+    ),
+    {
+      initialEntries: [
+        `${ADMINFORM_ROUTE}/61540ece3d4a6e50ac0cc6ff/${ADMINFORM_RESULTS_SUBROUTE}`,
+      ],
+    },
   )
+  return <RouterProvider router={router} />
 }
 export const EmailForm = Template.bind({})
 
 export const EmailFormLoading = Template.bind({})
 EmailFormLoading.parameters = {
-  msw: [
-    ...createFormBuilderMocks({}, 0),
-    getAdminFormSubmissions({ delay: 'infinite' }),
-    getUser(),
-    getAdminFormCollaborators(),
-  ],
+  msw: {
+    handlers: {
+      default: [
+        ...createFormBuilderMocks({}, 0),
+        getAdminFormSubmissions({ delay: 'infinite' }),
+        getUser(),
+        getAdminFormCollaborators(),
+      ],
+    },
+  },
 }
 
 export const EmptyEmailForm = Template.bind({})
 EmptyEmailForm.parameters = {
-  msw: [
-    ...createFormBuilderMocks({}, 0),
-    getAdminFormSubmissions({
-      override: 0,
-    }),
-    getUser(),
-    getAdminFormCollaborators(),
-  ],
+  msw: {
+    handlers: {
+      default: [
+        ...createFormBuilderMocks({}, 0),
+        getAdminFormSubmissions({
+          override: 0,
+        }),
+        getUser(),
+        getAdminFormCollaborators(),
+      ],
+    },
+  },
 }
 
 export const EmailFormTablet = Template.bind({})
@@ -116,19 +126,23 @@ EmailFormMobile.parameters = getMobileViewParameters()
 
 export const StorageForm = Template.bind({})
 StorageForm.parameters = {
-  msw: [
-    ...createFormBuilderMocks(
-      {
-        responseMode: FormResponseMode.Encrypt,
-        publicKey: MOCK_KEYPAIR.publicKey,
-      },
-      0,
-    ),
-    getAdminFormSubmissions(),
-    getStorageSubmissionMetadataResponse(),
-    getUser(),
-    getAdminFormCollaborators(),
-  ],
+  msw: {
+    handlers: {
+      default: [
+        ...createFormBuilderMocks(
+          {
+            responseMode: FormResponseMode.Encrypt,
+            publicKey: MOCK_KEYPAIR.publicKey,
+          },
+          0,
+        ),
+        getAdminFormSubmissions(),
+        getStorageSubmissionMetadataResponse(),
+        getUser(),
+        getAdminFormCollaborators(),
+      ],
+    },
+  },
 }
 
 export const StorageFormUnlocked = Template.bind({})
@@ -177,39 +191,54 @@ StorageFormMobile.parameters = {
 
 export const StorageFormLoading = Template.bind({})
 StorageFormLoading.parameters = {
-  msw: [
-    ...createFormBuilderMocks({ responseMode: FormResponseMode.Encrypt }, 0),
-    getAdminFormSubmissions({ delay: 'infinite' }),
-    getStorageSubmissionMetadataResponse({}, 'infinite'),
-    getUser(),
-    getAdminFormCollaborators(),
-  ],
+  msw: {
+    handlers: {
+      default: [
+        ...createFormBuilderMocks(
+          { responseMode: FormResponseMode.Encrypt },
+          0,
+        ),
+        getAdminFormSubmissions({ delay: 'infinite' }),
+        getStorageSubmissionMetadataResponse({}, 'infinite'),
+        getUser(),
+        getAdminFormCollaborators(),
+      ],
+    },
+  },
 }
 
 export const MultiRespondentFormUnlocked = Template.bind({})
 MultiRespondentFormUnlocked.parameters = {
-  msw: [
-    ...createFormBuilderMocks(
-      {
-        responseMode: FormResponseMode.Multirespondent,
-        publicKey: MOCK_KEYPAIR.publicKey,
-      },
-      0,
-    ),
-    getAdminFormSubmissions({ override: 5 }),
-    getMultiRespondentSubmissionMetadataResponse(),
-    getUser(),
-    getAdminFormCollaborators(),
-  ],
+  msw: {
+    handlers: {
+      default: [
+        ...createFormBuilderMocks(
+          {
+            responseMode: FormResponseMode.Multirespondent,
+            publicKey: MOCK_KEYPAIR.publicKey,
+          },
+          0,
+        ),
+        getAdminFormSubmissions({ override: 5 }),
+        getMultiRespondentSubmissionMetadataResponse(),
+        getUser(),
+        getAdminFormCollaborators(),
+      ],
+    },
+  },
 }
 MultiRespondentFormUnlocked.play = StorageFormUnlocked.play
 
 export const Loading = Template.bind({})
 Loading.parameters = {
-  msw: [
-    ...createFormBuilderMocks({ responseMode: undefined }, 'infinite'),
-    getAdminFormSubmissions({ delay: 'infinite' }),
-    getUser(),
-    getAdminFormCollaborators(),
-  ],
+  msw: {
+    handlers: {
+      default: [
+        ...createFormBuilderMocks({ responseMode: undefined }, 'infinite'),
+        getAdminFormSubmissions({ delay: 'infinite' }),
+        getUser(),
+        getAdminFormCollaborators(),
+      ],
+    },
+  },
 }

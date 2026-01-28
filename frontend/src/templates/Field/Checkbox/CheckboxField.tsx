@@ -12,7 +12,7 @@ import {
 import { FormColorTheme, Language } from '~shared/types'
 
 import { CHECKBOX_THEME_KEY } from '~theme/components/Checkbox'
-import { createCheckboxValidationRules } from '~utils/fieldValidation'
+import { useCheckboxValidationRules } from '~utils/fieldValidation'
 import { getFieldOptionsInSelectedLanguage } from '~utils/multiLanguage'
 import Checkbox from '~components/Checkbox'
 import { CheckboxProps } from '~components/Checkbox/Checkbox'
@@ -58,9 +58,9 @@ export const CheckboxField = ({
     [schema._id],
   )
 
-  const validationRules = useMemo(
-    () => createCheckboxValidationRules(schema, disableRequiredValidation),
-    [disableRequiredValidation, schema],
+  const validationRules = useCheckboxValidationRules(
+    schema,
+    disableRequiredValidation,
   )
 
   const englishCheckboxOptions = schema.fieldOptions
@@ -132,7 +132,10 @@ export const CheckboxField = ({
                 <input type="checkbox" hidden value="" />
               ) : null}
               {schema.othersRadioButton ? (
-                <Checkbox.OthersWrapper colorScheme={fieldColorScheme}>
+                <Checkbox.OthersWrapper
+                  colorScheme={fieldColorScheme}
+                  disabled={schema.disabled}
+                >
                   <FormControl
                     isRequired={schema.required}
                     isDisabled={schema.disabled}

@@ -46,6 +46,7 @@ declare global {
             formDef?: IPopulatedMultirespondentForm
             featureFlags?: string[]
             encryptedPayload?: MultirespondentSubmissionDto
+            verifiedContent?: EncryptedContent
             unencryptedAttachments?: IAttachmentInfo[]
           }
     }
@@ -56,6 +57,7 @@ declare module 'express-session' {
   export interface SessionData {
     user?: {
       _id: IUserSchema['_id']
+      grantSource?: 'sso' | 'otp'
     }
     sgid?: SgidUser
   }
@@ -63,6 +65,7 @@ declare module 'express-session' {
   export interface AuthedSessionData extends SessionData {
     user: {
       _id: IUserSchema['_id']
+      grantSource: 'sso' | 'otp'
     }
   }
 }

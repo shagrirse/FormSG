@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { BiCommentDetail } from 'react-icons/bi'
 import { GoDotFill } from 'react-icons/go'
+import { MdForum } from 'react-icons/md'
 import { Link as ReactLink } from 'react-router-dom'
 import {
   As,
@@ -13,13 +14,15 @@ import {
   Icon,
   useDisclosure,
 } from '@chakra-ui/react'
+import { useFeatureIsOn, useGrowthBook } from '@growthbook/growthbook-react'
 
+import { featureFlags } from '~shared/constants'
 import { SeenFlags } from '~shared/types'
 
 import { BxsHelpCircle } from '~assets/icons/BxsHelpCircle'
 import { BxsRocket } from '~assets/icons/BxsRocket'
 import BrandMarkSvg from '~assets/svgs/brand/brand-mark-colour.svg?react'
-import { FEATURE_REQUEST, FORM_GUIDE } from '~constants/links'
+import { FEATURE_REQUEST, FORM_GUIDE, FORUMSG_URL } from '~constants/links'
 import {
   EMERGENCY_CONTACT_KEY_PREFIX,
   ROLLOUT_ANNOUNCEMENT_KEY_PREFIX,
@@ -28,6 +31,7 @@ import { DASHBOARD_ROUTE } from '~constants/routes'
 import { ADMIN_FEEDBACK_SESSION_KEY } from '~constants/sessionStorage'
 import { useIsMobile } from '~hooks/useIsMobile'
 import { useLocalStorage } from '~hooks/useLocalStorage'
+import { useToast } from '~hooks/useToast'
 import { logout } from '~services/AuthService'
 import Button from '~components/Button'
 import IconButton from '~components/IconButton'
@@ -57,27 +61,31 @@ const AdminNavBarLink = ({ MobileIcon, href, label }: AdminNavBarLinkProps) => {
 
   if (isMobile && MobileIcon) {
     return (
-      <IconButton
-        variant="clear"
-        as="a"
-        href={href}
-        aria-label={label}
-        icon={<Icon as={MobileIcon} fontSize="1.25rem" color="primary.500" />}
-      />
+      <Box position="relative">
+        <IconButton
+          variant="clear"
+          as="a"
+          href={href}
+          aria-label={label}
+          icon={<Icon as={MobileIcon} fontSize="1.25rem" color="primary.500" />}
+        />
+      </Box>
     )
   }
 
   return (
-    <Link
-      w="fit-content"
-      variant="standalone"
-      color="secondary.500"
-      href={href}
-      aria-label={label}
-      target="_blank"
-    >
-      {label}
-    </Link>
+    <Box position="relative">
+      <Link
+        w="fit-content"
+        variant="standalone"
+        color="secondary.500"
+        href={href}
+        aria-label={label}
+        target="_blank"
+      >
+        {label}
+      </Link>
+    </Box>
   )
 }
 
@@ -144,6 +152,20 @@ export interface AdminNavBarProps {
 export const AdminNavBar = ({ isMenuOpen }: AdminNavBarProps): JSX.Element => {
   const { user, isLoading: isUserLoading, removeQuery } = useUser()
   const { updateLastSeenFlagMutation } = useUserMutations()
+  const toast = useToast({ status: 'success', isClosable: true })
+
+  const growthbook = useGrowthBook()
+
+  // Set GrowthBook attributes for targeting rules synchronously
+  useMemo(() => {
+    if (growthbook && user?.email) {
+      growthbook.setAttributes({
+        ...growthbook.getAttributes(),
+        adminEmail: user.email,
+        adminAgency: user.agency?.shortName,
+      })
+    }
+  }, [growthbook, user?.email, user?.agency?.shortName])
 
   const whatsNewFeatureDrawerDisclosure = useDisclosure()
 
@@ -228,9 +250,19 @@ export const AdminNavBar = ({ isMenuOpen }: AdminNavBarProps): JSX.Element => {
     if (emergencyContactKey) {
       localStorage.removeItem(emergencyContactKey)
     }
-  }, [emergencyContactKey, removeQuery])
+    if (user?.grantSource === 'sso') {
+      toast({
+        title: 'You have been logged out of FormSG.',
+        description: 'To log out from SSO, visit https://sso.open.gov.sg',
+        status: 'success',
+      })
+    }
+  }, [emergencyContactKey, removeQuery, toast, user])
 
   const { t } = useTranslation()
+
+  //TODO: Remove forum link after H4PG2026
+  const isForumSGEnabled = useFeatureIsOn(featureFlags.forumsg)
 
   const navLinks: AdminNavBarLinkProps[] = [
     {
@@ -243,6 +275,16 @@ export const AdminNavBar = ({ isMenuOpen }: AdminNavBarProps): JSX.Element => {
       href: FORM_GUIDE,
       MobileIcon: BxsHelpCircle,
     },
+    // TODO: Remove forum link after H4PG2026
+    ...(isForumSGEnabled
+      ? [
+          {
+            label: 'Forum',
+            href: FORUMSG_URL,
+            MobileIcon: MdForum,
+          },
+        ]
+      : []),
   ]
 
   return (

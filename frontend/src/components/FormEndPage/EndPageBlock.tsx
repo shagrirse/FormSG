@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Box, Text, VisuallyHidden } from '@chakra-ui/react'
+import { useFeatureValue } from '@growthbook/growthbook-react'
 import { format } from 'date-fns'
 
 import {
@@ -11,6 +12,8 @@ import {
   PublicFormDto,
 } from '~shared/types/form'
 
+import { OgpAwarenessBadge } from '~assets/svgrs/brand/OgpAwarenessBadge'
+import { OgpAwarenessBanner } from '~assets/svgrs/brand/OgpAwarenessBanner'
 import { useMdComponents } from '~hooks/useMdComponents'
 import { getValueInSelectedLanguage } from '~utils/multiLanguage'
 import { MarkdownText } from '~components/MarkdownText'
@@ -28,6 +31,7 @@ export interface EndPageBlockProps {
   focusOnMount?: boolean
   isButtonHidden?: boolean
   form: PublicFormDto | undefined
+  isPreview?: boolean
 }
 
 export const EndPageBlock = ({
@@ -38,6 +42,7 @@ export const EndPageBlock = ({
   focusOnMount,
   isButtonHidden,
   form,
+  isPreview,
 }: EndPageBlockProps): JSX.Element => {
   const { i18n } = useTranslation()
   const focusRef = useRef<HTMLDivElement>(null)
@@ -83,8 +88,21 @@ export const EndPageBlock = ({
     return 'You have successfully submitted your response.'
   }, [formTitle])
 
+  const ogpAwareness = useFeatureValue('ogp-awareness', 'none')
+  const ogpAwarenessComponent = (() => {
+    switch (ogpAwareness) {
+      case 'banner':
+        return <OgpAwarenessBanner />
+      case 'badge':
+        return <OgpAwarenessBadge />
+      default:
+        return undefined
+    }
+  })()
+
   return (
     <>
+      {ogpAwarenessComponent && <Box mb="1rem">{ogpAwarenessComponent}</Box>}
       <Box ref={focusRef}>
         <VisuallyHidden aria-live="assertive">
           {submittedAriaText}
@@ -114,6 +132,7 @@ export const EndPageBlock = ({
             <StatusTrackerLink
               formId={form?._id}
               submissionId={submissionData.id}
+              isPreview={isPreview}
             />
           </Box>
         ) : (
@@ -126,6 +145,18 @@ export const EndPageBlock = ({
             )}
           </Box>
         )}
+
+        {/* For MRF status tracking preview */}
+        {form?.responseMode == FormResponseMode.Multirespondent &&
+        form?.hasStatusTracker &&
+        isPreview ? (
+          <Box mt="2.25rem">
+            <SubmitAnotherResponseButton
+              endPage={endPage}
+              colorTheme={colorTheme}
+            />
+          </Box>
+        ) : null}
       </Box>
     </>
   )

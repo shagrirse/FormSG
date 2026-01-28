@@ -1,3 +1,4 @@
+import { GrowthBook } from '@growthbook/growthbook'
 import { encode as encodeBase64 } from '@stablelib/base64'
 import crypto from 'crypto'
 import StatusCodes from 'http-status-codes'
@@ -14,7 +15,11 @@ import {
 import mongoose from 'mongoose'
 import { err, ok, Result } from 'neverthrow'
 
-import { MULTIRESPONDENT_FORM_SUBMISSION_VERSION } from '../../../../shared/constants'
+import {
+  AdminEmailPdfFeatureValue,
+  featureFlags,
+  MULTIRESPONDENT_FORM_SUBMISSION_VERSION,
+} from '../../../../shared/constants'
 import { FIELDS_TO_REJECT } from '../../../../shared/constants/field/basic'
 import { MYINFO_ATTRIBUTE_MAP } from '../../../../shared/constants/field/myinfo'
 import {
@@ -139,6 +144,7 @@ import {
   MaliciousFileDetectedError,
   MrfReminderInvalidWorkflowStepError,
   MrfReminderRecipientEmailsEmptyError,
+  MrfWorkflowOverflowError,
   ParseVirusScannerLambdaPayloadError,
   ProcessingError,
   ResponseModeError,
@@ -364,6 +370,12 @@ const errorMapper: MapRouteError = (
       return {
         statusCode: StatusCodes.BAD_REQUEST,
         errorMessage: error.message,
+      }
+    case MrfWorkflowOverflowError:
+      return {
+        statusCode: StatusCodes.BAD_REQUEST,
+        errorMessage:
+          'The link you used is no longer valid. Please contact the form admin that gave you this link.',
       }
     case MailSendError:
       return {
@@ -769,7 +781,15 @@ export const getMyInfoPrefix = (
   response: ResponseFormattedForEmail | ProcessedFieldResponse,
   hashedFields: Set<MyInfoKey>,
 ): string => {
-  return !!response.myInfo?.attr && hashedFields.has(response._id)
+  /* encrypt mode children fields have ids e.g. childrenbirthrecords.67585515e1ced6d790a91e14.childname.0
+   * without the suffixed child name. So we check if any hashed fields starts with response id
+   */
+  const isResponseMyInfoChildren =
+    response.fieldType === BasicField.Children &&
+    Array.from(hashedFields).some((field) => field.startsWith(response._id))
+
+  return !!response.myInfo?.attr &&
+    (hashedFields.has(response._id) || isResponseMyInfoChildren)
     ? MYINFO_PREFIX
     : ''
 }
@@ -925,4 +945,27 @@ export const buildMrfMetadata = ({
     lastSubmittedAt,
     hasNextStepRecipientEmails,
   }
+}
+
+export const isAdminEmailPdfEnabled = ({
+  growthbook,
+  formFields,
+}: {
+  growthbook?: GrowthBook
+  formFields: FormFieldSchema[]
+}) => {
+  if (!growthbook) {
+    return false
+  }
+  const adminEmailPdfFeatureValue = growthbook.getFeatureValue(
+    featureFlags.adminEmailPdf,
+    AdminEmailPdfFeatureValue.OFF,
+  )
+  if (adminEmailPdfFeatureValue === AdminEmailPdfFeatureValue.ON) {
+    return true
+  }
+  if (adminEmailPdfFeatureValue === AdminEmailPdfFeatureValue.SIGNATURES_ONLY) {
+    return formFields.some((field) => field.fieldType === BasicField.Signature)
+  }
+  return false
 }

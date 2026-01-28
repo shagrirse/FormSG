@@ -14,6 +14,28 @@ export const featureFlags = {
   mfb: 'magic-form-builder' as const,
   mfbVision: 'magic-form-builder-vision' as const,
   guardduty: 'guardduty' as const,
+  saveDraft: 'save-draft' as const,
   respondentCopy: 'respondent-copy' as const,
   statusTracker: 'status-tracker' as const,
+  designDrawerFormTitle: 'design-drawer-form-title' as const,
+  adminPrintPdf: 'admin-print-pdf' as const,
+  ogpSuiteSso: 'ogp-suite-sso' as const,
+  enableIntranetSgidLogin: 'enable-intranet-sgid-login' as const,
+  enableMrfWebhooks: 'enable-mrf-webhooks' as const,
+  useFormsgEsrvcId: 'use-formsg-esrvcid' as const,
+  lambdaPdfGeneration: 'lambda-pdf-generation' as const,
+  singpassMrf: 'singpass-mrf' as const,
+  enableSaveDraftButtonFloating: 'enable-save-draft-button-floating' as const,
+  enableSaveDraftButtonHeader: 'enable-save-draft-button-header' as const,
+  adminEmailPdf: 'admin-email-pdf' as const,
+  ogpHeader: 'enable-ogp-header' as const,
+  ogpAwareness: 'ogp-awareness' as const,
+  ogpSpinner: 'ogp-spinner' as const,
+  forumsg: 'forumsg' as const,
+}
+
+export enum AdminEmailPdfFeatureValue {
+  OFF = 'OFF',
+  SIGNATURES_ONLY = 'SIGNATURES_ONLY',
+  ON = 'ON',
 }

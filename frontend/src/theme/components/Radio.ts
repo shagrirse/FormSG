@@ -98,6 +98,9 @@ export const Radio: ComponentMultiStyleConfig<typeof parts> = {
       color: 'secondary.700',
       _hover: {
         bg: `${c}.100`,
+        _disabled: {
+          bg: 'none',
+        },
       },
       _focusWithin: {
         // use boxShadow instead of border to ensure that control and label
@@ -105,15 +108,17 @@ export const Radio: ComponentMultiStyleConfig<typeof parts> = {
         boxShadow: `inset 0 0 0 0.125rem ${getColor(theme, `${c}.500`)}`,
       },
       _disabled: {
-        bg: 'white',
-        color: 'neutral.500',
+        bg: 'none',
+        color: 'neutral.800',
         cursor: 'not-allowed',
+        _hover: {
+          bg: 'none',
+        },
       },
     },
     // Text label
     label: {
       _disabled: {
-        color: 'neutral.500',
         // Chakra automatically sets opacity to 0.4, so override that
         opacity: 1,
       },

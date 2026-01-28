@@ -33,14 +33,13 @@ Info.args = {
 export const Warning = InlineMessageTemplate.bind({})
 Warning.args = {
   variant: 'warning',
-  children:
-    'Highlighted fields below have been pre-filled according to the form link you clicked. You may edit these fields if necessary, except non-editable fields with a lock icon.',
+  children: 'Some fields below have been pre-filled.',
   useMarkdown: false,
 }
 
 export const Error = InlineMessageTemplate.bind({})
 Error.args = {
   variant: 'error',
-  children: `Only 30 MyInfo fields are allowed (30/30). [Learn more](http://localhost:6006)`,
+  children: `Only 30 Myinfo fields are allowed (30/30). [Learn more](http://localhost:6006)`,
   useMarkdown: true,
 }

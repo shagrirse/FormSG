@@ -26,6 +26,10 @@ export interface General extends HasTitle {
   customisation: {
     closedFormMessage: string
   }
+  saveDraft: {
+    label: string
+    description: string
+  }
   captcha: {
     label: string
     description: string
@@ -33,5 +37,8 @@ export interface General extends HasTitle {
   issueNotifications: {
     label: string
     description: string
+  }
+  singpass: {
+    mrfFirstStep: string
   }
 }

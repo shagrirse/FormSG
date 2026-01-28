@@ -12,6 +12,7 @@ export interface CreateFormModal {
     }
     useWizardWithinContext: string
     noSingpassInMrf: string
+    noMyInfoChildrenInMrf: string
   }
   details: {
     name: {
@@ -20,11 +21,11 @@ export interface CreateFormModal {
     }
     type: {
       label: string
+      description: string
       storage: {
         title: string
         subtitle: string
         optionDescriptionItems: {
-          supportEmailSubmissions: string
           supportSingpassMyinfo: string
           supportWebhooks: string
           sensitivity: string
@@ -34,8 +35,8 @@ export interface CreateFormModal {
         title: string
         subtitle: string
         optionDescriptionItems: {
-          supportEmailSubmissions: string
           supportApprovalWorkflow: string
+          supportEmailRouting: string
           sensitivity: string
         }
       }
@@ -85,5 +86,27 @@ export interface CreateFormModal {
   }
   emailFormRecipient: {
     placeholder: string
+  }
+  emailModeFeedback: {
+    header: string
+    description: string
+    question: {
+      title: string
+      options: {
+        sensitiveHigh: string
+      }
+    }
+    next: string
+  }
+  emailModeCreation: {
+    header: string
+    formName: {
+      label: string
+    }
+    notifications: {
+      label: string
+      description: string
+    }
+    create: string
   }
 }

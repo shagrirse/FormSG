@@ -1,0 +1,26 @@
+name: Deploy Virus Scanner GuardDuty to stg
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  id-token: write
+  contents: read
+
+on:
+  push:
+    branches:
+      - stg
+
+jobs:
+  deploy-scanner-guardduty:
+    name: Deploy Scanner GuardDuty
+    uses: ./.github/workflows/aws-deploy-scanner-guardduty-iac.yml
+    with:
+      checkoutBranch: 'stg'
+      gha-environment: 'stg'
+      environment: 'stg'
+      provisionedConcurrency: 1
+    secrets:
+      cicd-role: ${{ secrets.IAC_AWS_CI_ROLE_TO_ASSUME }}

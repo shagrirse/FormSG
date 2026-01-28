@@ -1,5 +1,11 @@
 import { Suspense, useEffect } from 'react'
-import { Route, Routes } from 'react-router-dom'
+import { Helmet } from 'react-helmet-async'
+import {
+  createBrowserRouter,
+  createRoutesFromElements,
+  Route,
+  RouterProvider,
+} from 'react-router-dom'
 import { Box } from '@chakra-ui/react'
 import { useGrowthBook } from '@growthbook/growthbook-react'
 import loadable from '@loadable/component'
@@ -15,6 +21,7 @@ import {
   EDIT_SUBMISSION_PAGE_SUBROUTE,
   LANDING_PAYMENTS_ROUTE,
   LANDING_ROUTE,
+  LOGIN_CALLBACK_FORWARDING_ROUTE,
   LOGIN_CALLBACK_ROUTE,
   LOGIN_ROUTE,
   PAYMENT_PAGE_SUBROUTE,
@@ -22,6 +29,7 @@ import {
   PUBLICFORM_ROUTE,
   RESULTS_CHARTS_SUBROUTE,
   RESULTS_FEEDBACK_SUBROUTE,
+  SSO_LOGIN_HOLDING_ROUTE,
   STATUS_TRACKER_SUBROUTE,
   TEMP_LOGIN_ROUTE,
   TOU_ROUTE,
@@ -41,7 +49,9 @@ import {
 } from '~features/admin-form/responses'
 import { ChartsPage } from '~features/admin-form/responses/ChartsPage/ChartsPage'
 import { SettingsPage } from '~features/admin-form/settings/SettingsPage'
+import { RbiProxyForwardingPage } from '~features/compatibility/RbiProxyForwardingPage'
 import { SelectProfilePage } from '~features/login'
+import { SsoHoldingPage } from '~features/login/SsoHoldingPage'
 import { FormPaymentPage } from '~features/public-form/components/FormPaymentPage/FormPaymentPage'
 import { BillingPage } from '~features/user/billing'
 
@@ -84,9 +94,9 @@ export const AppRouter = (): JSX.Element => {
     }
   }, [growthbook])
 
-  return (
-    <WithSuspense>
-      <Routes>
+  const router = createBrowserRouter(
+    createRoutesFromElements(
+      <Route path="/">
         <Route
           path={LANDING_ROUTE}
           element={<HashRouterElement element={<LandingPage />} />}
@@ -104,12 +114,20 @@ export const AppRouter = (): JSX.Element => {
           element={<PublicElement strict element={<LoginPage />} />}
         />
         <Route
+          path={SSO_LOGIN_HOLDING_ROUTE}
+          element={<PublicElement strict element={<SsoHoldingPage />} />}
+        />
+        <Route
           path={TEMP_LOGIN_ROUTE}
           element={<PublicElement strict element={<TempLoginPage />} />}
         />
         <Route
           path={LOGIN_CALLBACK_ROUTE}
           element={<PublicElement strict element={<SelectProfilePage />} />}
+        />
+        <Route
+          path={LOGIN_CALLBACK_FORWARDING_ROUTE}
+          element={<PublicElement element={<RbiProxyForwardingPage />} />}
         />
         <Route
           path={PRIVACY_POLICY_ROUTE}
@@ -153,9 +171,14 @@ export const AppRouter = (): JSX.Element => {
           <Route
             path={EDIT_SUBMISSION_PAGE_SUBROUTE}
             element={
-              <ParamIdValidator
-                element={<PublicElement element={<PublicFormPage />} />}
-              />
+              <>
+                <Helmet>
+                  <meta name="robots" content="noindex,nofollow" />
+                </Helmet>
+                <ParamIdValidator
+                  element={<PublicElement element={<PublicFormPage />} />}
+                />
+              </>
             }
           />
           <Route
@@ -216,7 +239,13 @@ export const AppRouter = (): JSX.Element => {
           }
         />
         <Route path="*" element={<NotFoundErrorPage />} />
-      </Routes>
+      </Route>,
+    ),
+  )
+
+  return (
+    <WithSuspense>
+      <RouterProvider router={router} />
     </WithSuspense>
   )
 }

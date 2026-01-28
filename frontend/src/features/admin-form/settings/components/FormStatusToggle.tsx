@@ -5,7 +5,6 @@ import { Flex, Skeleton, Stack, Text, useDisclosure } from '@chakra-ui/react'
 import { BasicField } from '~shared/types'
 import {
   EmailFormDto,
-  FormAuthType,
   FormResponseMode,
   FormStatus,
 } from '~shared/types/form/form'
@@ -14,12 +13,14 @@ import InlineMessage from '~components/InlineMessage'
 import { Switch } from '~components/Toggle/Switch'
 
 import { useAdminForm } from '~features/admin-form/common/queries'
+import { useUser } from '~features/user/queries'
 
 import { useMutateFormSettings } from '../mutations'
 import { useAdminFormSettings } from '../queries'
 
 import { EmailModeConvertModal } from './EmailModeConvertModal'
 import { SecretKeyActivationModal } from './SecretKeyActivationModal'
+import { isEsrvcidRequired } from './utils'
 
 export const FormStatusToggle = (): JSX.Element => {
   const { t } = useTranslation()
@@ -29,7 +30,7 @@ export const FormStatusToggle = (): JSX.Element => {
   } = useAdminForm()
   const { data: formSettings, isLoading: isLoadingFormSettings } =
     useAdminFormSettings()
-
+  const { user } = useUser()
   const { status, responseMode, authType, esrvcId } = formSettings ?? {}
 
   const secretKeyActivationModalProps = useDisclosure()
@@ -41,13 +42,7 @@ export const FormStatusToggle = (): JSX.Element => {
     if (status === FormStatus.Public) return
 
     // Prevent form activation if form has authType but no esrvcId.
-    if (
-      authType &&
-      [FormAuthType.CP, FormAuthType.SP, FormAuthType.MyInfo].includes(
-        authType,
-      ) &&
-      !esrvcId
-    ) {
+    if (authType && isEsrvcidRequired(authType) && !esrvcId) {
       return t(
         'features.adminForm.settings.general.status.supplySingpassEServiceId',
       )
@@ -59,7 +54,8 @@ export const FormStatusToggle = (): JSX.Element => {
       form_fields?.some(
         (ff) =>
           ff.fieldType === BasicField.Email && ff.autoReplyOptions.hasAutoReply,
-      )
+      ) &&
+      !user?.betaFlags?.respondentCopy
     ) {
       return t('features.adminForm.settings.general.status.noEmailsInMRF')
     }

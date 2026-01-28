@@ -5,6 +5,11 @@ import { ObjectId } from 'bson'
 import { assignIn, cloneDeep, merge, omit, pick } from 'lodash'
 import mongoose, { ClientSession } from 'mongoose'
 import { err, errAsync, ok, okAsync } from 'neverthrow'
+import {
+  FormWorkflowStepConditional,
+  FormWorkflowStepDynamic,
+  FormWorkflowStepStatic,
+} from 'shared/types/form/workflow'
 import { Workspace } from 'shared/types/workspace'
 import {
   EncryptedStringsMessageContent,
@@ -16,6 +21,7 @@ import getAgencyModel from 'src/app/models/agency.server.model'
 import getFormModel, {
   getEmailFormModel,
   getEncryptedFormModel,
+  getMultirespondentFormModel,
 } from 'src/app/models/form.server.model'
 import getFormWhitelistSubmitterIdsModel from 'src/app/models/form_whitelist.server.model'
 import { getWorkspaceModel } from 'src/app/models/workspace.server.model'
@@ -40,10 +46,12 @@ import {
   IFormSchema,
   IPopulatedEncryptedForm,
   IPopulatedForm,
+  IPopulatedMultirespondentForm,
   IUserSchema,
   PickDuplicateForm,
 } from 'src/types'
 import { EditFormFieldParams } from 'src/types/api'
+import { IMultirespondentFormSchema } from 'src/types/form'
 
 import {
   CONDITIONAL_ROUTING_EMAILS_OPTIONS_MISSING_ERROR_MESSAGE,
@@ -57,6 +65,7 @@ import {
   AdminDashboardFormMetaDto,
   BasicField,
   CustomFormLogo,
+  DropdownFieldBase,
   DuplicateFormBodyDto,
   FieldCreateDto,
   FieldUpdateDto,
@@ -73,6 +82,7 @@ import {
   PaymentChannel,
   PaymentType,
   SettingsUpdateDto,
+  WorkflowType,
 } from '../../../../../../shared/types'
 import {
   FormNotFoundError,
@@ -92,6 +102,7 @@ import * as AdminFormUtils from '../admin-form.utils'
 const FormModel = getFormModel(mongoose)
 const EmailFormModel = getEmailFormModel(mongoose)
 const EncryptFormModel = getEncryptedFormModel(mongoose)
+const MultirespondentFormModel = getMultirespondentFormModel(mongoose)
 const AgencyModel = getAgencyModel(mongoose)
 const WorkspaceModel = getWorkspaceModel(mongoose)
 const FormWhitelistedSubmitterIdsModel =
@@ -445,6 +456,349 @@ describe('admin-form.service', () => {
         getDuplicateParams: jest.fn().mockReturnValue(expectedParams),
       }) as IFormDocument
 
+    describe('mrf workflow duplication', () => {
+      afterEach(() => {
+        jest.clearAllMocks()
+      })
+
+      const EMAIL_FIELD_ID = 'emailFieldId'
+      const DROPDOWN_FIELD_ID = 'dropdownFieldId'
+      const DROPDOWN_FIELD_OPTIONS_TO_RECIPIENTS_MAP = {
+        'Option 1': ['option1@example.com'],
+        'Option 2': ['option2@example.com'],
+      }
+      const MOCK_MRF_FORM_FIELDS = [
+        {
+          _id: 'shortTextFieldId',
+          fieldType: BasicField.ShortText,
+          title: 'Text Field',
+        },
+        {
+          _id: 'yesNoFieldId',
+          fieldType: BasicField.YesNo,
+          title: 'YesNo Field',
+        },
+        {
+          _id: EMAIL_FIELD_ID,
+          fieldType: BasicField.Email,
+          title: 'Email Field',
+        },
+        {
+          _id: DROPDOWN_FIELD_ID,
+          fieldType: BasicField.Dropdown,
+          title: 'Dropdown Field',
+          optionsToRecipientsMap: DROPDOWN_FIELD_OPTIONS_TO_RECIPIENTS_MAP,
+        },
+      ]
+      const ORIGINAL_STATIC_STEP_EMAILS = [
+        'original@example.com',
+        'original2@example.com',
+      ]
+      const MOCK_MRF_WORKFLOW = [
+        {
+          _id: 'step1',
+          workflow_type: WorkflowType.Static,
+          emails: ORIGINAL_STATIC_STEP_EMAILS,
+          edit: ['shortTextFieldId', 'emailFieldId'],
+          step_name: 'Static Step',
+        },
+        {
+          _id: 'step2',
+          workflow_type: WorkflowType.Dynamic,
+          field: 'emailFieldId',
+          edit: ['dropdownFieldId'],
+          step_name: 'Dynamic Step',
+        },
+        {
+          _id: 'step3',
+          workflow_type: WorkflowType.Conditional,
+          conditional_field: 'dropdownFieldId',
+          edit: ['yesNoFieldId'],
+          step_name: 'Conditional Step',
+        },
+      ]
+      const MOCK_MRF_FORM = {
+        ...MOCK_VALID_FORM,
+        responseMode: FormResponseMode.Multirespondent,
+        workflow: MOCK_MRF_WORKFLOW,
+        form_fields: MOCK_MRF_FORM_FIELDS,
+      } as unknown as IPopulatedMultirespondentForm
+
+      const MOCK_OVERRIDE_EMAILS = [
+        'replaced1@example.com',
+        'replaced2@example.com',
+      ]
+
+      const NO_OVERRIDE_EMAILS_OPTS = {}
+      const OVERRIDE_EMAILS_OPTS = {
+        overrideEmails: MOCK_OVERRIDE_EMAILS,
+      }
+
+      const OVERRIDE_PARAMS: DuplicateFormBodyDto = {
+        responseMode: FormResponseMode.Multirespondent,
+        title: 'Duplicated MRF Form',
+        publicKey: 'duplicated public key',
+      }
+
+      it('for static workflow step, should not replace destination email if override emails is not provided', async () => {
+        // Arrange
+        const mockNewAdminId = new ObjectId().toHexString()
+        const isolatedFormFields = cloneDeep(MOCK_MRF_FORM_FIELDS)
+        const isolatedWorkflow = cloneDeep(MOCK_MRF_WORKFLOW)
+        const mockForm = {
+          ...MOCK_MRF_FORM,
+          getDuplicateParams: jest.fn().mockReturnValue({
+            admin: mockNewAdminId,
+            responseMode: FormResponseMode.Multirespondent,
+            title: 'Duplicated MRF Form',
+            publicKey: 'duplicated public key',
+            form_fields: isolatedFormFields,
+            workflow: isolatedWorkflow,
+          }),
+        } as unknown as IFormDocument
+
+        const createSpy = jest
+          .spyOn(FormModel, 'create')
+          .mockResolvedValueOnce(mockForm as never)
+
+        // Act
+        const result = await AdminFormService.duplicateForm(
+          mockForm,
+          mockNewAdminId,
+          OVERRIDE_PARAMS,
+          NO_OVERRIDE_EMAILS_OPTS,
+        )
+
+        // Assert
+        expect(result.isOk()).toBe(true)
+
+        const duplicatedForm = createSpy.mock.calls[0][0] as PickDuplicateForm
+        const staticStep = (duplicatedForm as IMultirespondentFormSchema)
+          .workflow[0] as FormWorkflowStepStatic
+        expect(staticStep.emails).toEqual(ORIGINAL_STATIC_STEP_EMAILS)
+      })
+
+      it('for static workflow step, should replace step email with override emails if override emails is provided', async () => {
+        // Arrange
+        const mockNewAdminId = new ObjectId().toHexString()
+        const isolatedFormFields = cloneDeep(MOCK_MRF_FORM_FIELDS)
+        const isolatedWorkflow = cloneDeep(MOCK_MRF_WORKFLOW)
+        const mockForm = {
+          ...MOCK_MRF_FORM,
+          getDuplicateParams: jest.fn().mockReturnValue({
+            admin: mockNewAdminId,
+            responseMode: FormResponseMode.Multirespondent,
+            title: 'Duplicated MRF Form',
+            publicKey: 'duplicated public key',
+            form_fields: isolatedFormFields,
+            workflow: isolatedWorkflow,
+          }),
+        } as unknown as IFormDocument
+
+        const createSpy = jest
+          .spyOn(FormModel, 'create')
+          .mockResolvedValueOnce(mockForm as never)
+
+        // Act
+        const result = await AdminFormService.duplicateForm(
+          mockForm,
+          mockNewAdminId,
+          OVERRIDE_PARAMS,
+          OVERRIDE_EMAILS_OPTS,
+        )
+
+        // Assert
+        expect(result.isOk()).toBe(true)
+
+        const duplicatedForm = createSpy.mock.calls[0][0] as PickDuplicateForm
+        const staticStep = (duplicatedForm as IMultirespondentFormSchema)
+          .workflow[0] as FormWorkflowStepStatic
+
+        expect(staticStep.emails).toEqual(MOCK_OVERRIDE_EMAILS)
+      })
+
+      it('for dynamic workflow step, should not replace email field id when override emails is provided', async () => {
+        // Arrange
+        const mockNewAdminId = new ObjectId().toHexString()
+        const isolatedFormFields = cloneDeep(MOCK_MRF_FORM_FIELDS)
+        const isolatedWorkflow = cloneDeep(MOCK_MRF_WORKFLOW)
+        const mockForm = {
+          ...MOCK_MRF_FORM,
+          getDuplicateParams: jest.fn().mockReturnValue({
+            admin: mockNewAdminId,
+            responseMode: FormResponseMode.Multirespondent,
+            title: 'Duplicated MRF Form',
+            publicKey: 'duplicated public key',
+            form_fields: isolatedFormFields,
+            workflow: isolatedWorkflow,
+          }),
+        } as unknown as IFormDocument
+
+        const createSpy = jest
+          .spyOn(FormModel, 'create')
+          .mockResolvedValueOnce(mockForm as never)
+
+        // Act
+        const result = await AdminFormService.duplicateForm(
+          mockForm,
+          mockNewAdminId,
+          OVERRIDE_PARAMS,
+          OVERRIDE_EMAILS_OPTS,
+        )
+
+        // Assert
+        expect(result.isOk()).toBe(true)
+
+        const duplicatedForm = createSpy.mock.calls[0][0] as PickDuplicateForm
+        const dynamicStep = (duplicatedForm as IMultirespondentFormSchema)
+          .workflow[1] as FormWorkflowStepDynamic
+
+        expect(dynamicStep.field).toEqual(EMAIL_FIELD_ID)
+      })
+
+      it('for dynamic workflow step, should not replace email field id when override emails is not provided', async () => {
+        // Arrange
+        const mockNewAdminId = new ObjectId().toHexString()
+        const isolatedFormFields = cloneDeep(MOCK_MRF_FORM_FIELDS)
+        const isolatedWorkflow = cloneDeep(MOCK_MRF_WORKFLOW)
+        const mockForm = {
+          ...MOCK_MRF_FORM,
+          getDuplicateParams: jest.fn().mockReturnValue({
+            admin: mockNewAdminId,
+            responseMode: FormResponseMode.Multirespondent,
+            title: 'Duplicated MRF Form',
+            publicKey: 'duplicated public key',
+            form_fields: isolatedFormFields,
+            workflow: isolatedWorkflow,
+          }),
+        } as unknown as IFormDocument
+
+        const createSpy = jest
+          .spyOn(FormModel, 'create')
+          .mockResolvedValueOnce(mockForm as never)
+
+        // Act
+        const result = await AdminFormService.duplicateForm(
+          mockForm,
+          mockNewAdminId,
+          OVERRIDE_PARAMS,
+          NO_OVERRIDE_EMAILS_OPTS,
+        )
+
+        // Assert
+        expect(result.isOk()).toBe(true)
+
+        const duplicatedForm = createSpy.mock.calls[0][0] as PickDuplicateForm
+        const dynamicStep = (duplicatedForm as IMultirespondentFormSchema)
+          .workflow[1] as FormWorkflowStepDynamic
+        expect(dynamicStep.field).toEqual(EMAIL_FIELD_ID)
+      })
+
+      it('for conditional workflow step, should not replace dropdown field id and optionsToRecipientsMap is changed when override emails is provided', async () => {
+        // Arrange
+        const mockNewAdminId = new ObjectId().toHexString()
+        const isolatedFormFields = cloneDeep(MOCK_MRF_FORM_FIELDS)
+        const isolatedWorkflow = cloneDeep(MOCK_MRF_WORKFLOW)
+        const mockForm = {
+          ...MOCK_MRF_FORM,
+          getDuplicateParams: jest.fn().mockReturnValue({
+            admin: mockNewAdminId,
+            responseMode: FormResponseMode.Multirespondent,
+            title: 'Duplicated MRF Form',
+            publicKey: 'duplicated public key',
+            form_fields: isolatedFormFields,
+            workflow: isolatedWorkflow,
+          }),
+        } as unknown as IFormDocument
+
+        const createSpy = jest
+          .spyOn(FormModel, 'create')
+          .mockResolvedValueOnce(mockForm as never)
+
+        // Act
+        const result = await AdminFormService.duplicateForm(
+          mockForm,
+          mockNewAdminId,
+          OVERRIDE_PARAMS,
+          OVERRIDE_EMAILS_OPTS,
+        )
+
+        // Assert
+        expect(result.isOk()).toBe(true)
+
+        const duplicatedForm = createSpy.mock.calls[0][0] as PickDuplicateForm
+        const conditionalStep = (duplicatedForm as IMultirespondentFormSchema)
+          .workflow[2] as FormWorkflowStepConditional
+        expect(conditionalStep.conditional_field).toEqual(DROPDOWN_FIELD_ID)
+
+        const duplicatedDropdownField = (
+          duplicatedForm as IMultirespondentFormSchema
+        ).form_fields?.find(
+          (field) => field._id.toString() === DROPDOWN_FIELD_ID,
+        ) as DropdownFieldBase
+        const duplicatedDropdownFieldOptionsToRecipientsMap =
+          duplicatedDropdownField?.optionsToRecipientsMap
+        expect(duplicatedDropdownFieldOptionsToRecipientsMap).not.toEqual(
+          DROPDOWN_FIELD_OPTIONS_TO_RECIPIENTS_MAP,
+        )
+        const expectedMap = {
+          'Option 1': OVERRIDE_EMAILS_OPTS.overrideEmails,
+          'Option 2': OVERRIDE_EMAILS_OPTS.overrideEmails,
+        }
+        expect(duplicatedDropdownFieldOptionsToRecipientsMap).toEqual(
+          expectedMap,
+        )
+      })
+
+      it('for conditional workflow step, should not replace dropdown field id and optionsToRecipientsMap is not changed when override emails is not provided', async () => {
+        // Arrange
+        const isolatedFormFields = cloneDeep(MOCK_MRF_FORM_FIELDS)
+        const isolatedWorkflow = cloneDeep(MOCK_MRF_WORKFLOW)
+        const mockNewAdminId = new ObjectId().toHexString()
+        const mockForm = {
+          ...MOCK_MRF_FORM,
+          getDuplicateParams: jest.fn().mockReturnValue({
+            admin: mockNewAdminId,
+            responseMode: FormResponseMode.Multirespondent,
+            title: 'Duplicated MRF Form',
+            publicKey: 'duplicated public key',
+            form_fields: isolatedFormFields,
+            workflow: isolatedWorkflow,
+          }),
+        } as unknown as IFormDocument
+
+        const createSpy = jest
+          .spyOn(FormModel, 'create')
+          .mockResolvedValueOnce(mockForm as never)
+
+        // Act
+        const result = await AdminFormService.duplicateForm(
+          mockForm,
+          mockNewAdminId,
+          OVERRIDE_PARAMS,
+          NO_OVERRIDE_EMAILS_OPTS,
+        )
+
+        // Assert
+        expect(result.isOk()).toBe(true)
+        const duplicatedForm = createSpy.mock.calls[0][0] as PickDuplicateForm
+        const conditionalStep = (duplicatedForm as IMultirespondentFormSchema)
+          .workflow[2] as FormWorkflowStepConditional
+        expect(conditionalStep.conditional_field).toEqual(DROPDOWN_FIELD_ID)
+        const duplicatedDropdownField = (
+          duplicatedForm as IMultirespondentFormSchema
+        ).form_fields?.find(
+          (field) => field._id.toString() === DROPDOWN_FIELD_ID,
+        ) as DropdownFieldBase
+
+        const duplicatedDropdownFieldOptionsToRecipientsMap =
+          duplicatedDropdownField?.optionsToRecipientsMap
+        expect(duplicatedDropdownFieldOptionsToRecipientsMap).toEqual(
+          DROPDOWN_FIELD_OPTIONS_TO_RECIPIENTS_MAP,
+        )
+      })
+    })
+
     it('should successfully duplicate form', async () => {
       // Arrange
       const mockNewAdminId = new ObjectId().toHexString()
@@ -512,7 +866,7 @@ describe('admin-form.service', () => {
         mockForm,
         mockNewAdminId,
         MOCK_EMAIL_OVERRIDE_PARAMS,
-        mockWorkspaceId,
+        { workspaceId: mockWorkspaceId },
       )
 
       // Assert
@@ -1306,6 +1660,7 @@ describe('admin-form.service', () => {
   describe('updateFormSettings', () => {
     const MOCK_UPDATED_SETTINGS = {
       authType: FormAuthType.NIL,
+      isSaveDraftEnabled: true,
       hasCaptcha: false,
       inactiveMessage: 'some inactive message',
       status: FormStatus.Private,
@@ -1354,8 +1709,14 @@ describe('admin-form.service', () => {
           multi_product: false,
         },
       },
+      isSaveDraftEnabled: false,
       getSettings: jest.fn(),
     } as unknown as IPopulatedForm)
+    const MOCK_MULTIRESPONDENT_FORM = jest.mocked({
+      _id: new ObjectId(),
+      status: FormStatus.Public,
+      responseMode: FormResponseMode.Multirespondent,
+    } as unknown as IPopulatedMultirespondentForm)
 
     const EMAIL_UPDATE_SPY = jest
       .spyOn(EmailFormModel, 'findByIdAndUpdate')
@@ -1366,6 +1727,13 @@ describe('admin-form.service', () => {
       })
     const ENCRYPT_UPDATE_SPY = jest
       .spyOn(EncryptFormModel, 'findByIdAndUpdate')
+
+      // @ts-ignore
+      .mockReturnValue({
+        exec: jest.fn().mockResolvedValue(MOCK_UPDATED_FORM),
+      })
+    const MULTIRESPONDENT_UPDATE_SPY = jest
+      .spyOn(MultirespondentFormModel, 'findByIdAndUpdate')
 
       // @ts-ignore
       .mockReturnValue({
@@ -1397,6 +1765,28 @@ describe('admin-form.service', () => {
       expect(MOCK_UPDATED_FORM.getSettings).toHaveBeenCalledTimes(1)
     })
 
+    it('should return updated form settings when successfully updating multirespondent form settings', async () => {
+      // Arrange
+      const settingsToUpdate: SettingsUpdateDto = {
+        isSaveDraftEnabled: false,
+      }
+
+      // Act
+      const actualResult = await AdminFormService.updateFormSettings(
+        MOCK_MULTIRESPONDENT_FORM,
+        settingsToUpdate,
+      )
+
+      // Assert
+      expect(actualResult._unsafeUnwrap()).toEqual(MOCK_UPDATED_SETTINGS)
+      expect(MULTIRESPONDENT_UPDATE_SPY).toHaveBeenCalledWith(
+        MOCK_MULTIRESPONDENT_FORM._id,
+        settingsToUpdate,
+        { new: true, runValidators: true },
+      )
+      expect(MOCK_UPDATED_FORM.getSettings).toHaveBeenCalledTimes(1)
+    })
+
     it('should return updated form settings when successfully updating encrypt form settings', async () => {
       // Arrange
       const settingsToUpdate: SettingsUpdateDto = {
@@ -1416,6 +1806,29 @@ describe('admin-form.service', () => {
         MOCK_ENCRYPT_FORM._id,
         // Should be dotified
         { 'webhook.url': 'https://example.com' },
+        { new: true, runValidators: true },
+      )
+      expect(MOCK_UPDATED_FORM.getSettings).toHaveBeenCalledTimes(1)
+    })
+
+    it('should return updated isSaveDraftEnabled when successfully updating encrypt form settings', async () => {
+      // Arrange
+      const settingsToUpdate: SettingsUpdateDto = {
+        isSaveDraftEnabled: false,
+      }
+
+      // Act
+      const actualResult = await AdminFormService.updateFormSettings(
+        MOCK_ENCRYPT_FORM,
+        settingsToUpdate,
+      )
+
+      // Assert
+      expect(MOCK_ENCRYPT_FORM.isSaveDraftEnabled).toBeFalse()
+      expect(actualResult._unsafeUnwrap()).toEqual(MOCK_UPDATED_SETTINGS)
+      expect(ENCRYPT_UPDATE_SPY).toHaveBeenCalledWith(
+        MOCK_ENCRYPT_FORM._id,
+        settingsToUpdate,
         { new: true, runValidators: true },
       )
       expect(MOCK_UPDATED_FORM.getSettings).toHaveBeenCalledTimes(1)
@@ -1453,7 +1866,7 @@ describe('admin-form.service', () => {
       expect(MOCK_UPDATED_FORM.getSettings).toHaveBeenCalledTimes(0)
     })
 
-    it('should not allow webhooks updates for MRF', async () => {
+    it('should allow webhooks updates for MRF', async () => {
       const MOCK_MULTIRESPONDENT_FORM = jest.mocked({
         _id: new ObjectId(),
         status: FormStatus.Public,
@@ -1461,7 +1874,7 @@ describe('admin-form.service', () => {
       } as unknown as IPopulatedForm)
       const settingsToUpdate: SettingsUpdateDto = {
         webhook: {
-          url: 'does not matter',
+          url: 'https://example.com',
         },
       }
 
@@ -1472,9 +1885,14 @@ describe('admin-form.service', () => {
       )
 
       // Assert
-      expect(actualResult._unsafeUnwrapErr()).toBeInstanceOf(
-        MalformedParametersError,
+      expect(actualResult._unsafeUnwrap()).toEqual(MOCK_UPDATED_SETTINGS)
+      expect(MULTIRESPONDENT_UPDATE_SPY).toHaveBeenCalledWith(
+        MOCK_MULTIRESPONDENT_FORM._id,
+        // Should be dotified
+        { 'webhook.url': 'https://example.com' },
+        { new: true, runValidators: true },
       )
+      expect(MOCK_UPDATED_FORM.getSettings).toHaveBeenCalledTimes(1)
     })
 
     it('should allow webhooks updates for encrypt form', async () => {

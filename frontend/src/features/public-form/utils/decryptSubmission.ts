@@ -4,7 +4,10 @@ import {
 } from '@opengovsg/formsg-sdk/dist/types'
 import { decode as decodeBase64 } from '@stablelib/base64'
 
-import { FieldResponsesV3, MultirespondentSubmissionDto } from '~shared/types'
+import {
+  FieldResponsesV3,
+  PublicMultirespondentSubmissionDto,
+} from '~shared/types'
 
 import formsgSdk from '~utils/formSdk'
 
@@ -19,16 +22,32 @@ export const decryptSubmission = ({
   submission,
   secretKey,
 }: {
-  submission?: MultirespondentSubmissionDto
+  submission?: PublicMultirespondentSubmissionDto
   secretKey?: string
 }):
-  | (Omit<MultirespondentSubmissionDto, 'encryptedContent' | 'version'> & {
+  | (Omit<
+      PublicMultirespondentSubmissionDto,
+      'encryptedContent' | 'version'
+    > & {
       responses: FieldResponsesV3
       submissionSecretKey: string
     })
   | undefined => {
   if (!submission) throw Error('Encrypted submission undefined')
   if (!secretKey) throw Error('Secret key undefined')
+
+  // For testing, do not perform decryption and return the encrypted content directly
+  // (which will be a un-encrypted FieldResponsesV3 object)
+  const isTest = import.meta.env.STORYBOOK_NODE_ENV === 'test'
+  if (isTest) {
+    return {
+      ...submission,
+      responses: JSON.parse(
+        submission.encryptedContent,
+      ) as unknown as FieldResponsesV3,
+      submissionSecretKey: secretKey,
+    }
+  }
 
   const { encryptedContent, version, ...rest } = submission
 

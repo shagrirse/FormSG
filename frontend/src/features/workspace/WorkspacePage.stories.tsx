@@ -1,6 +1,6 @@
 import { Meta, StoryFn } from '@storybook/react'
 import { times } from 'lodash'
-import { rest } from 'msw'
+import { delay as MswDelay, http, HttpResponse } from 'msw'
 
 import { UserId } from '~shared/types'
 import {
@@ -56,14 +56,14 @@ const THIRTY_FORMS = [
     'This is a very very very very very very very very long title it should be properly truncated only in desktop view',
   ),
   ...createForm(29),
-]
+] as AdminDashboardFormMetaDto[]
 
 const BASE_MSW_HANDLERS = [
   ...envHandlers,
-  rest.get<AdminDashboardFormMetaDto[]>(
+  http.get<never, never, AdminDashboardFormMetaDto[]>(
     '/api/v3/admin/forms',
-    (req, res, ctx) => {
-      return res(ctx.json(THIRTY_FORMS))
+    () => {
+      return HttpResponse.json(THIRTY_FORMS)
     },
   ),
   getWorkspaces(),
@@ -115,10 +115,11 @@ Mobile.parameters = {
 export const LoadingDesktop = Template.bind({})
 LoadingDesktop.parameters = {
   msw: [
-    rest.get<AdminDashboardFormMetaDto[]>(
+    http.get<never, never, AdminDashboardFormMetaDto[]>(
       '/api/v3/admin/forms',
-      (req, res, ctx) => {
-        return res(ctx.delay('infinite'), ctx.json({}))
+      async () => {
+        await MswDelay('infinite')
+        return HttpResponse.json()
       },
     ),
   ],
@@ -133,13 +134,22 @@ LoadingMobile.parameters = {
 export const Empty = Template.bind({})
 Empty.parameters = {
   msw: [
-    rest.get<AdminDashboardFormMetaDto[]>(
+    ...envHandlers,
+    http.get<never, never, AdminDashboardFormMetaDto[]>(
       '/api/v3/admin/forms',
-      (req, res, ctx) => {
-        return res(ctx.json([]))
+      () => {
+        return HttpResponse.json()
       },
     ),
-    ...BASE_MSW_HANDLERS,
+    getWorkspaces(),
+    getUser({
+      delay: 0,
+      mockUser: {
+        ...MOCK_USER,
+        _id: 'undefined' as UserId,
+        email: 'meh@example.com',
+      },
+    }),
   ],
 }
 
@@ -149,16 +159,33 @@ EmptyMobile.parameters = {
   ...Mobile.parameters,
 }
 
+export const EmptyWithAnnouncementModal = Template.bind({})
+EmptyWithAnnouncementModal.parameters = {
+  msw: [
+    http.get<never, never, AdminDashboardFormMetaDto[]>(
+      '/api/v3/admin/forms',
+      () => {
+        return HttpResponse.json()
+      },
+    ),
+    ...BASE_MSW_HANDLERS,
+  ],
+}
+
+export const EmptyMobileWithAnnouncementModal = Template.bind({})
+EmptyMobileWithAnnouncementModal.parameters = {
+  ...EmptyWithAnnouncementModal.parameters,
+  ...Mobile.parameters,
+}
+
 export const AllOpenDesktop = Template.bind({})
 AllOpenDesktop.parameters = {
   msw: [
-    rest.get<AdminDashboardFormMetaDto[]>(
+    http.get<never, never, AdminDashboardFormMetaDto[]>(
       '/api/v3/admin/forms',
-      (req, res, ctx) => {
-        return res(
-          ctx.json(
-            THIRTY_FORMS.filter((form) => form.status === FormStatus.Public),
-          ),
+      () => {
+        return HttpResponse.json(
+          THIRTY_FORMS.filter((form) => form.status === FormStatus.Public),
         )
       },
     ),
@@ -171,10 +198,10 @@ AllOpenDesktopNoAnnouncementModal.parameters = {
   ...AllOpenDesktop.parameters,
   msw: [
     ...envHandlers,
-    rest.get<AdminDashboardFormMetaDto[]>(
+    http.get<never, never, AdminDashboardFormMetaDto[]>(
       '/api/v3/admin/forms',
-      (req, res, ctx) => {
-        return res(ctx.json(THIRTY_FORMS))
+      () => {
+        return HttpResponse.json(THIRTY_FORMS)
       },
     ),
     getWorkspaces(),

@@ -14,8 +14,10 @@ export interface Fields {
     validation: {
       domainDisallowed: string
     }
+    respondentCopyHelperText: string
   }
   attachment: {
+    disabled: string
     fileUploaderLink: string
     dragAndDrop: string
     dragActive: string

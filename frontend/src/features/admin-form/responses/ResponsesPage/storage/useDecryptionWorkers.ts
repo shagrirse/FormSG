@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useMutation, UseMutationOptions } from 'react-query'
 import { datadogLogs } from '@datadog/browser-logs'
-import { useFeatureIsOn } from '@growthbook/growthbook-react'
 
 import { waitForMs } from '~utils/waitForMs'
 
@@ -15,10 +14,7 @@ import {
 } from '~features/analytics/AnalyticsService'
 import { useUser } from '~features/user/queries'
 
-import {
-  downloadResponseAttachment,
-  downloadResponseAttachmentURL,
-} from './utils/downloadCsv'
+import { downloadResponseAttachment } from './utils/downloadCsv'
 import { EncryptedResponseCsvGenerator } from './utils/EncryptedResponseCsvGenerator'
 import {
   EncryptedResponsesStreamParams,
@@ -28,6 +24,7 @@ import {
 import {
   CleanableDecryptionWorkerApi,
   CsvRecordStatus,
+  DecryptedData,
   DownloadResult,
 } from './types'
 
@@ -50,6 +47,7 @@ export type DownloadEncryptedParams = EncryptedResponsesStreamParams & {
   responsesCount: number
   // Used to determine if we should add MRF related columns to the CSV.
   isMrf: boolean
+  isDownloadCsv: boolean
 }
 interface UseDecryptionWorkersProps {
   onProgress: (progress: number) => void
@@ -61,19 +59,6 @@ interface UseDecryptionWorkersProps {
   >
 }
 
-function timeout(
-  ms: number,
-  errorMessage = 'Operation timed out',
-): Promise<never> {
-  return new Promise((_, reject) =>
-    setTimeout(() => reject(new Error(errorMessage)), ms),
-  )
-}
-
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return Promise.race([promise, timeout(ms)])
-}
-
 const useDecryptionWorkers = ({
   onProgress,
   mutateProps,
@@ -83,10 +68,6 @@ const useDecryptionWorkers = ({
 
   const { data: adminForm } = useAdminForm()
   const { user } = useUser()
-
-  const isTest = import.meta.env.STORYBOOK_NODE_ENV === 'test'
-  const isFasterDownloadsFeatureOn = useFeatureIsOn('faster-downloads')
-  const isFasterDownloadsEnabled = isTest || isFasterDownloadsFeatureOn
 
   useEffect(() => {
     return () => killWorkers(workers)
@@ -103,6 +84,7 @@ const useDecryptionWorkers = ({
     async ({
       responsesCount,
       downloadAttachments,
+      isDownloadCsv,
       secretKey,
       endDate,
       startDate,
@@ -128,16 +110,24 @@ const useDecryptionWorkers = ({
       const numWorkers = downloadAttachments
         ? 1
         : window.navigator.hardwareConcurrency || 4
-      let errorCount = 0
-      let unverifiedCount = 0
-      let attachmentErrorCount = 0
-      let receivedRecordCount = 0
+
+      let currentSubmissionIndex = 0 // used to iterate through the workers
+      let attachmentsToSaveCount = 0 // used for scheduling delays between attachment zip file saves
+      const csvOutcomeCounts = {
+        errorCount: 0,
+        unverifiedCount: 0,
+        attachmentErrorCount: 0,
+      }
+      const decryptionOutcomeCounts = {
+        decryptionSuccessCount: 0,
+        decryptionFailureCount: 0,
+      }
 
       const logMeta = {
         action: 'downloadEncryptedReponses',
         formId: adminForm._id,
         formTitle: adminForm.title,
-        downloadAttachments: downloadAttachments,
+        downloadAttachments,
         num_workers: numWorkers,
         expectedNumSubmissions: NUM_OF_METADATA_ROWS,
         adminId: user?._id,
@@ -158,11 +148,13 @@ const useDecryptionWorkers = ({
 
       setWorkers(workerPool)
 
-      const csvGenerator = new EncryptedResponseCsvGenerator(
-        responsesCount,
-        NUM_OF_METADATA_ROWS,
-        isMrf,
-      )
+      const csvGenerator = isDownloadCsv
+        ? new EncryptedResponseCsvGenerator(
+            responsesCount,
+            NUM_OF_METADATA_ROWS,
+            isMrf,
+          )
+        : undefined
 
       const stream = await getEncryptedResponsesStream(
         adminForm._id,
@@ -172,84 +164,123 @@ const useDecryptionWorkers = ({
       const reader = stream.getReader()
       let read: (result: ReadableStreamReadResult<string>) => void
       const downloadStartTime = performance.now()
+      let decryptionProgress = 0
+      const submissionDecryptPromises: Promise<DecryptedData>[] = []
 
-      let progress = 0
       let timeSinceLastXAttachmentDownload = 0
 
-      return new Promise<DownloadResult>((resolve, reject) => {
-        reader
-          .read()
-          .then(
-            (read = async (result) => {
-              if (result.done) return
-              try {
-                // round-robin scheduling
-                const { workerApi } =
-                  workerPool[receivedRecordCount % numWorkers]
-                const decryptResult = await workerApi.decryptIntoCsv(
-                  {
-                    line: result.value,
-                    secretKey,
-                    downloadAttachments,
-                    formId: adminForm._id,
-                    hostOrigin: window.location.origin,
-                  },
-                  isFasterDownloadsEnabled,
-                )
-                progress += 1
-                onProgress(progress)
+      await reader.read().then(
+        (read = async (result) => {
+          if (result.done) return
+          const { workerApi } = workerPool[currentSubmissionIndex % numWorkers]
+          // Step 1: Use worker to decrypt the submission (and download and decrypt attachments if needed).
+          submissionDecryptPromises.push(
+            workerApi
+              .getDecryptedData({
+                isDownloadAttachments: downloadAttachments,
+                isDownloadCsv,
+                submissionStreamDtoString: result.value,
+                secretKey,
+                formId: adminForm._id,
+                hostOrigin: window.location.origin,
+              })
+              // Step 2: Update the Csv record status based on the decryption result.
+              .then(async (decryptResult) => {
+                // Count general decryption successes and failures
+                const {
+                  isDecryptionSuccessful,
+                  isDownloadAndDecryptSubmissionAttachmentsSuccessful,
+                } = decryptResult.status
 
-                switch (decryptResult.status) {
-                  case CsvRecordStatus.Error:
-                    errorCount++
-                    break
-                  case CsvRecordStatus.Unverified:
-                    unverifiedCount++
-                    break
-                  case CsvRecordStatus.AttachmentError:
-                    errorCount++
-                    attachmentErrorCount++
-                    break
-                  case CsvRecordStatus.Ok: {
-                    try {
-                      csvGenerator.addRecord(decryptResult.submissionData)
-                      receivedRecordCount++
-                    } catch (e) {
-                      errorCount++
-                      console.error('Error in getResponseInstance', e)
-                    }
+                const decryptionFailed =
+                  !isDecryptionSuccessful ||
+                  (downloadAttachments &&
+                    !isDownloadAndDecryptSubmissionAttachmentsSuccessful)
 
-                    if (downloadAttachments && decryptResult.downloadBlob) {
-                      // Ensure attachments downloads are spaced out to avoid browser blocking downloads
-                      if (progress % ATTACHMENT_DOWNLOAD_CONVOY_SIZE === 0) {
-                        const now = new Date().getTime()
-                        const elapsedSinceXDownloads =
-                          now - timeSinceLastXAttachmentDownload
+                if (decryptionFailed) {
+                  decryptionOutcomeCounts.decryptionFailureCount++
+                } else {
+                  decryptionOutcomeCounts.decryptionSuccessCount++
+                }
 
-                        const waitTime = Math.max(
-                          0,
-                          ATTACHMENT_DOWNLOAD_CONVOY_MINIMUM_SEPARATION_TIME -
-                            elapsedSinceXDownloads,
+                // Count number of csv success and failures
+                if (isDownloadCsv && csvGenerator) {
+                  const { materializedCsvRecord } = decryptResult
+                  switch (materializedCsvRecord?.status) {
+                    case CsvRecordStatus.Error:
+                      csvOutcomeCounts.errorCount++
+                      break
+                    case CsvRecordStatus.Unverified:
+                      csvOutcomeCounts.unverifiedCount++
+                      break
+                    case CsvRecordStatus.AttachmentError:
+                      csvOutcomeCounts.errorCount++
+                      csvOutcomeCounts.attachmentErrorCount++
+                      break
+                    case CsvRecordStatus.Ok: {
+                      try {
+                        csvGenerator.addRecord(
+                          materializedCsvRecord.submissionData,
                         )
-                        if (waitTime > 0) {
-                          await waitForMs(waitTime)
-                        }
-                        timeSinceLastXAttachmentDownload = now
+                      } catch (e) {
+                        csvOutcomeCounts.errorCount++
+                        console.error('Error in getResponseInstance', e)
                       }
-                      await downloadResponseAttachment(
-                        decryptResult.downloadBlob,
-                        decryptResult.id,
-                      )
                     }
                   }
                 }
-              } catch (e) {
-                console.error('Error parsing JSON', e)
-              }
-              // recurse through the stream
-              return reader.read().then(read)
-            }),
+                return decryptResult
+              })
+              // Step 3: Save the downloaded and decrypted attachment blobs for each submission (if required).
+              // This step is done with delays in between groups of files to space out downloads to avoid browser blocking downloads.
+              .then(async (decryptResult) => {
+                if (
+                  downloadAttachments &&
+                  decryptResult.attachmentDownloadBlob &&
+                  decryptResult.submissionId
+                ) {
+                  attachmentsToSaveCount += 1
+
+                  // Ensure attachments downloads are spaced out to avoid browser blocking downloads
+                  if (
+                    attachmentsToSaveCount % ATTACHMENT_DOWNLOAD_CONVOY_SIZE ===
+                    0
+                  ) {
+                    const now = new Date().getTime()
+                    const elapsedSinceXDownloads =
+                      now - timeSinceLastXAttachmentDownload
+
+                    const waitTime = Math.max(
+                      0,
+                      ATTACHMENT_DOWNLOAD_CONVOY_MINIMUM_SEPARATION_TIME -
+                        elapsedSinceXDownloads,
+                    )
+                    if (waitTime > 0) {
+                      await waitForMs(waitTime)
+                    }
+                    timeSinceLastXAttachmentDownload = now
+                  }
+                  await downloadResponseAttachment(
+                    decryptResult.attachmentDownloadBlob,
+                    decryptResult.submissionId,
+                  )
+                }
+                return decryptResult
+              })
+              // Step 4: Update the progress bar only once the attachments for the decrypted submission have been downloaded (if needed).
+              .finally(() => {
+                decryptionProgress += 1
+                onProgress(decryptionProgress)
+              }),
           )
+          currentSubmissionIndex += 1 // used to assign the next submission to the next worker
+          return reader.read().then(read)
+        }),
+      )
+
+      return new Promise<DownloadResult>((resolve, reject) => {
+        // Step 1: Decrypt all submissions and their attachments (into blobs), add the submissions into the csv object and save the attachments into user's computer.
+        Promise.all(submissionDecryptPromises)
           .catch((err) => {
             if (!downloadStartTime) {
               // No start time, means did not even start http request.
@@ -288,7 +319,6 @@ const useDecryptionWorkers = ({
                 err,
               )
             }
-
             console.error(
               'Failed to download data, is there a network issue?',
               err,
@@ -296,10 +326,25 @@ const useDecryptionWorkers = ({
             killWorkers(workerPool)
             reject(err)
           })
+          // Step 2: Generate the actual CSV file from the csv object.
           .finally(() => {
             const checkComplete = () => {
+              if (!isDownloadCsv || !csvGenerator) {
+                killWorkers(workerPool)
+                resolve({
+                  expectedCount: responsesCount,
+                  successCount: decryptionOutcomeCounts.decryptionSuccessCount,
+                  errorCount: decryptionOutcomeCounts.decryptionFailureCount,
+                  unverifiedCount: 0, // RATIONALE: For non-CSV downloads, no need to verify fields
+                })
+                return
+              }
               // If all the records could not be decrypted
-              if (errorCount + unverifiedCount === responsesCount) {
+              if (
+                csvOutcomeCounts.errorCount +
+                  csvOutcomeCounts.unverifiedCount ===
+                responsesCount
+              ) {
                 const failureEndTime = performance.now()
                 const timeDifference = failureEndTime - downloadStartTime
 
@@ -307,9 +352,10 @@ const useDecryptionWorkers = ({
                   meta: {
                     ...logMeta,
                     duration: timeDifference,
-                    error_count: errorCount,
-                    unverified_count: unverifiedCount,
-                    attachment_error_count: attachmentErrorCount,
+                    error_count: csvOutcomeCounts.errorCount,
+                    unverified_count: csvOutcomeCounts.unverifiedCount,
+                    attachment_error_count:
+                      csvOutcomeCounts.attachmentErrorCount,
                   },
                 })
 
@@ -318,27 +364,29 @@ const useDecryptionWorkers = ({
                   numWorkers,
                   csvGenerator.length(),
                   timeDifference,
-                  errorCount,
-                  attachmentErrorCount,
+                  csvOutcomeCounts.errorCount,
+                  csvOutcomeCounts.attachmentErrorCount,
                 )
 
                 killWorkers(workerPool)
                 resolve({
                   expectedCount: responsesCount,
                   successCount: csvGenerator.length(),
-                  errorCount,
-                  unverifiedCount,
+                  errorCount: csvOutcomeCounts.errorCount,
+                  unverifiedCount: csvOutcomeCounts.unverifiedCount,
                 })
               } else if (
                 // All results have been decrypted
-                csvGenerator.length() + errorCount + unverifiedCount >=
+                csvGenerator.length() +
+                  csvOutcomeCounts.errorCount +
+                  csvOutcomeCounts.unverifiedCount >=
                 responsesCount
               ) {
                 killWorkers(workerPool)
                 // Generate first three rows of meta-data before download
                 csvGenerator.addMetaDataFromSubmission(
-                  errorCount,
-                  unverifiedCount,
+                  csvOutcomeCounts.errorCount,
+                  csvOutcomeCounts.unverifiedCount,
                 )
                 csvGenerator.downloadCsv(
                   `${adminForm.title}-${adminForm._id}.csv`,
@@ -364,344 +412,32 @@ const useDecryptionWorkers = ({
                 resolve({
                   expectedCount: responsesCount,
                   successCount: csvGenerator.length(),
-                  errorCount,
-                  unverifiedCount,
+                  errorCount: csvOutcomeCounts.errorCount,
+                  unverifiedCount: csvOutcomeCounts.unverifiedCount,
                 })
               } else {
                 setTimeout(checkComplete, 100)
               }
             }
-
             checkComplete()
           })
       })
     },
-    [adminForm, onProgress, user?._id, workers, isFasterDownloadsEnabled],
+    [adminForm, onProgress, user?._id, workers],
   )
 
-  const downloadEncryptedResponsesFaster = useCallback(
-    async ({
-      responsesCount,
-      downloadAttachments,
-      secretKey,
-      endDate,
-      startDate,
-      isMrf,
-    }: DownloadEncryptedParams) => {
-      if (!adminForm || !responsesCount) {
-        return Promise.resolve({
-          expectedCount: 0,
-          successCount: 0,
-          errorCount: 0,
-        })
-      }
-
-      console.log('Faster downloads is enabled ⚡')
-
-      abortControllerRef.current.abort()
-      const freshAbortController = new AbortController()
-      abortControllerRef.current = freshAbortController
-
-      if (workers.length) killWorkers(workers)
-
-      const numWorkers = window.navigator.hardwareConcurrency || 4
-      let errorCount = 0
-      let unverifiedCount = 0
-      let attachmentErrorCount = 0
-      let unknownStatusCount = 0
-
-      const logMeta = {
-        action: 'downloadEncryptedReponses',
-        formId: adminForm._id,
-        formTitle: adminForm.title,
-        downloadAttachments: downloadAttachments,
-        num_workers: numWorkers,
-        expectedNumSubmissions: NUM_OF_METADATA_ROWS,
-        adminId: user?._id,
-      }
-      // Trigger analytics here before starting decryption worker
-      trackDownloadResponseStart(adminForm, numWorkers, NUM_OF_METADATA_ROWS)
-      datadogLogs.logger.info('Download response start', {
-        meta: {
-          ...logMeta,
-        },
-      })
-
-      const workerPool: CleanableDecryptionWorkerApi[] = []
-      const idleWorkers: number[] = []
-
-      for (let i = workerPool.length; i < numWorkers; i++) {
-        workerPool.push(makeWorkerApiAndCleanup())
-        idleWorkers.push(i)
-      }
-
-      setWorkers(workerPool)
-
-      const csvGenerator = new EncryptedResponseCsvGenerator(
-        responsesCount,
-        NUM_OF_METADATA_ROWS,
-        isMrf,
-      )
-
-      const stream = await getEncryptedResponsesStream(
-        adminForm._id,
-        { downloadAttachments, endDate, startDate },
-        freshAbortController,
-      )
-
-      const processTask = async (value: string, workerIdx: number) => {
-        const { workerApi } = workerPool[workerIdx]
-
-        const decryptResult = await workerApi.decryptIntoCsv(
-          {
-            line: value,
-            secretKey,
-            downloadAttachments,
-            formId: adminForm._id,
-            hostOrigin: window.location.origin,
-          },
-          isFasterDownloadsEnabled,
-        )
-
-        switch (decryptResult.status) {
-          case CsvRecordStatus.Ok:
-            try {
-              csvGenerator.addRecord(decryptResult.submissionData)
-            } catch (e) {
-              errorCount++
-              console.error('Error in getResponseInstance', e)
-            }
-
-            // It's fine to hog on to the worker here while waiting for the browser
-            // rate limit to pass. If decryption is fast, we would wait regardless.
-            // If decryption is slow, we won't hit rate limits.
-            if (downloadAttachments && decryptResult.downloadBlobURL) {
-              await downloadResponseAttachmentURL(
-                decryptResult.downloadBlobURL,
-                decryptResult.id,
-              )
-              URL.revokeObjectURL(decryptResult.downloadBlobURL)
-            }
-            break
-          case CsvRecordStatus.Unknown:
-            unknownStatusCount++
-            break
-          case CsvRecordStatus.Error:
-            errorCount++
-            break
-          case CsvRecordStatus.AttachmentError:
-            errorCount++
-            attachmentErrorCount++
-            break
-          case CsvRecordStatus.Unverified:
-            unverifiedCount++
-            break
-          default: {
-            // eslint-disable-next-line @typescript-eslint/no-unused-vars
-            const _: never = decryptResult.status
-            throw new Error('Invalid decryptResult status encountered.')
-          }
-        }
-        return workerIdx
-      }
-
-      const readAndQueueTask = async () => {
-        const reader = stream.getReader()
-        let progress = 0
-        let pendingTasks: Promise<number>[] = []
-
-        try {
-          while (progress < responsesCount) {
-            const { done, value } = await reader.read()
-            if (done) break
-
-            progress += 1
-            onProgress(progress)
-
-            while (idleWorkers.length === 0) {
-              const finishedTasks: number[] = []
-              for (let i = 0; i < pendingTasks.length; i++) {
-                try {
-                  const freedWorkerIdx = await withTimeout(pendingTasks[i], 50)
-                  idleWorkers.push(freedWorkerIdx)
-                  finishedTasks.push(i)
-                } catch (e) {
-                  if (
-                    e instanceof Error &&
-                    e.message === 'Operation timed out'
-                  ) {
-                    continue
-                  }
-                  console.error(`Error in task ${i}`, e)
-                }
-              }
-              pendingTasks = pendingTasks.filter(
-                (_, i) => !finishedTasks.includes(i),
-              )
-            }
-
-            const workerIdx = idleWorkers.shift()!
-            pendingTasks.push(processTask(value, workerIdx))
-          }
-          await Promise.all(pendingTasks)
-        } catch (e) {
-          console.error('Error reading stream', e)
-        } finally {
-          reader.releaseLock()
-        }
-      }
-
-      const downloadStartTime = performance.now()
-
-      return new Promise<DownloadResult>((resolve, reject) => {
-        readAndQueueTask()
-          .catch((err) => {
-            if (!downloadStartTime) {
-              // No start time, means did not even start http request.
-              datadogLogs.logger.info('Download network failure', {
-                meta: {
-                  ...logMeta,
-                  error: {
-                    message: err.message,
-                    name: err.name,
-                    stack: err.stack,
-                  },
-                },
-              })
-
-              trackDownloadNetworkFailure(adminForm, err)
-            } else {
-              const downloadFailedTime = performance.now()
-              const timeDifference = downloadFailedTime - downloadStartTime
-
-              datadogLogs.logger.info('Download response failure', {
-                meta: {
-                  ...logMeta,
-                  duration: timeDifference,
-                  error: {
-                    message: err.message,
-                    name: err.name,
-                    stack: err.stack,
-                  },
-                },
-              })
-
-              trackDownloadResponseFailure(
-                adminForm,
-                numWorkers,
-                NUM_OF_METADATA_ROWS,
-                timeDifference,
-                err,
-              )
-
-              console.error(
-                'Failed to download data, is there a network issue?',
-                err,
-              )
-              killWorkers(workerPool)
-              reject(err)
-            }
-          })
-          .finally(() => {
-            const checkComplete = () => {
-              // If all the records could not be decrypted
-              if (errorCount + unverifiedCount === responsesCount) {
-                const failureEndTime = performance.now()
-                // todo: check the timedifference redeclaration
-                const timeDifference = failureEndTime - downloadStartTime
-
-                datadogLogs.logger.info('Partial decryption failure', {
-                  meta: {
-                    ...logMeta,
-                    duration: timeDifference,
-                    error_count: errorCount,
-                    unverified_count: unverifiedCount,
-                    attachment_error_count: attachmentErrorCount,
-                    unknown_status_count: unknownStatusCount,
-                  },
-                })
-
-                trackPartialDecryptionFailure(
-                  adminForm,
-                  numWorkers,
-                  csvGenerator.length(),
-                  timeDifference,
-                  errorCount,
-                  attachmentErrorCount,
-                )
-
-                killWorkers(workerPool)
-                resolve({
-                  expectedCount: responsesCount,
-                  successCount: csvGenerator.length(),
-                  errorCount,
-                  unverifiedCount,
-                })
-              } else if (
-                // All results have been decrypted
-                csvGenerator.length() + errorCount + unverifiedCount >=
-                responsesCount
-              ) {
-                killWorkers(workerPool)
-                // Generate first three rows of meta-data before download
-                csvGenerator.addMetaDataFromSubmission(
-                  errorCount,
-                  unverifiedCount,
-                )
-                csvGenerator.downloadCsv(
-                  `${adminForm.title}-${adminForm._id}.csv`,
-                )
-
-                const downloadEndTime = performance.now()
-                const timeDifference = downloadEndTime - downloadStartTime
-
-                datadogLogs.logger.info('Download response success', {
-                  meta: {
-                    ...logMeta,
-                    duration: timeDifference,
-                  },
-                })
-
-                trackDownloadResponseSuccess(
-                  adminForm,
-                  numWorkers,
-                  NUM_OF_METADATA_ROWS,
-                  timeDifference,
-                )
-
-                resolve({
-                  expectedCount: responsesCount,
-                  successCount: csvGenerator.length(),
-                  errorCount,
-                  unverifiedCount,
-                })
-              } else {
-                setTimeout(checkComplete, 100)
-              }
-            }
-
-            checkComplete()
-          })
-      })
-    },
-    [adminForm, onProgress, user?._id, workers, isFasterDownloadsEnabled],
-  )
-
-  const handleExportCsvMutation = useMutation(
-    (params: DownloadEncryptedParams) =>
-      isFasterDownloadsEnabled
-        ? downloadEncryptedResponsesFaster(params)
-        : downloadEncryptedResponses(params),
+  const handleBulkDownloadMutation = useMutation(
+    (params: DownloadEncryptedParams) => downloadEncryptedResponses(params),
     mutateProps,
   )
 
   const abortDecryption = useCallback(() => {
     abortControllerRef.current.abort()
-    handleExportCsvMutation.reset()
+    handleBulkDownloadMutation.reset()
     killWorkers(workers)
-  }, [handleExportCsvMutation, workers])
+  }, [handleBulkDownloadMutation, workers])
 
-  return { handleExportCsvMutation, abortDecryption }
+  return { handleBulkDownloadMutation, abortDecryption }
 }
 
 export default useDecryptionWorkers

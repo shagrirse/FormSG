@@ -1,5 +1,6 @@
 import { useParams } from 'react-router-dom'
 import { Box, Flex, GridItem, GridProps, Text } from '@chakra-ui/react'
+import { useFeatureValue } from '@growthbook/growthbook-react'
 
 import { StepData, WorkflowStatus } from '~shared/types'
 
@@ -7,6 +8,8 @@ import { AppFooter } from '~/app/AppFooter'
 
 import { FCC } from '~typings/react'
 
+import { OgpAwarenessBadge } from '~assets/svgrs/brand/OgpAwarenessBadge'
+import { OgpAwarenessBanner } from '~assets/svgrs/brand/OgpAwarenessBanner'
 import { AppGrid } from '~templates/AppGrid'
 
 import NotFoundErrorPage from '~pages/NotFoundError'
@@ -28,7 +31,7 @@ import { TimelineRunSteps } from './TimelineRunSteps'
 export const TimelineGridArea: FCC = ({ children }) => (
   <GridItem
     gridColumn={{ md: '1 / 12', lg: '7 / 12' }}
-    py={{ base: '0rem', lg: '4rem' }}
+    py={{ base: '0rem', lg: '4.125rem' }}
     display="flex"
     alignItems={{ base: 'initial', md: 'initial', lg: 'center' }}
     justifyContent={{ lg: 'center' }}
@@ -95,6 +98,18 @@ export const StatusTrackerPage = (): JSX.Element => {
 
   const { data, isLoading, error } = useStatusTracker(submissionId)
 
+  const ogpAwareness = useFeatureValue('ogp-awareness', 'none')
+  const ogpAwarenessComponent = (() => {
+    switch (ogpAwareness) {
+      case 'banner':
+        return <OgpAwarenessBanner />
+      case 'badge':
+        return <OgpAwarenessBadge />
+      default:
+        return undefined
+    }
+  })()
+
   if (isLoading) return <StatusTrackerSkeletonPage />
 
   if (error || !data || !data.submittedSteps || !data.workflow)
@@ -154,6 +169,9 @@ export const StatusTrackerPage = (): JSX.Element => {
                 <Box ml="-1.5rem">
                   <PublicFormLogo />
                 </Box>
+                {ogpAwarenessComponent && (
+                  <Box my="1rem">{ogpAwarenessComponent}</Box>
+                )}
                 <Text mb="2rem" textStyle="h4">
                   Response ID: {data.responseId}
                 </Text>
